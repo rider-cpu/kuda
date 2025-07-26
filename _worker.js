@@ -1,9 +1,17 @@
-// @ts-ignore
-import { connect } from 'cloudflare:socket s';
+import { connect } from "cloudflare:sockets";
+// import { createHash, createDecipheriv } from "node:crypto";
+// import { Buffer } from "node:buffer";
 
-// How to generate your own UUID:
-// [Windows] Press "Win + R", input cmd and run:  Powershell -NoExit -Command "[guid]::NewGuid()"
-let userID = 'd342d11e-d424-4583-b36e-524ab1f0afa4';
+// Variables
+const rootDomain = "rider.web.id"; // Ganti dengan domain utama kalian
+const serviceName = "kuda"; // Ganti dengan nama workers kalian
+const apiKey = "AZq7Vttue6SCSQPS6o34BO6tF0ILKLF2wv1HpgBK"; // Ganti dengan Global API key kalian (https://dash.cloudflare.com/profile/api-tokens)
+const apiEmail = "iwanaffandi77@gmail.com"; // Ganti dengan email yang kalian gunakan
+const accountID = "1d95ec30b1d9e490c048d62f78937f19"; // Ganti dengan Account ID kalian (https://dash.cloudflare.com -> Klik domain yang kalian gunakan)
+const zoneID = "5ee58728b4ad21b8e4dd7e3e0efd8744"; // Ganti dengan Zone ID kalian (https://dash.cloudflare.com -> Klik domain yang kalian gunakan)
+let isApiReady = false;
+let proxyIP = "https://raw.githubusercontent.com/FoolVPN-ID/Nautica/refs/heads/main/proxyList.txt";
+let cachedProxyList = [];
 
 // Constant
 const APP_DOMAIN = `${serviceName}.${rootDomain}`;
@@ -27,939 +35,1644 @@ const CORS_HEADER_OPTIONS = {
   "Access-Control-Max-Age": "86400",
 };
 
+async function getKVProxyList(kvProxyUrl = KV_PROXY_URL) {
+  if (!kvProxyUrl) {
+    throw new Error("No KV Proxy URL Provided!");
+  }
 
-// if you want to use ipv6 or single พร็อกซีไอพี, please add comment at this line and remove comment at the next line
-let พร็อกซีไอพี = พร็อกซีไอพีs[Math.floor(Math.random() * พร็อกซีไอพีs.length)];
-// use single พร็อกซีไอพี instead of random
-// let พร็อกซีไอพี = 'cdn.xn--b6gac.eu.org';
-// ipv6 พร็อกซีไอพี example remove comment to use
-// let พร็อกซีไอพี = "[2a01:4f8:c2c:123f:64:5:6810:c55a]"
+  const kvProxy = await fetch(kvProxyUrl);
+  if (kvProxy.status == 200) {
+    return await kvProxy.json();
+  } else {
+    return {};
+  }
+}
 
-let dohURL = 'https://sky.rethinkdns.com/1:-Pf_____9_8A_AMAIgE8kMABVDDmKOHTAKg='; // https://cloudflare-dns.com/dns-query or https://dns.google/dns-query
+async function getProxyList(proxyBankUrl = PROXY_BANK_URL) {
+  /**
+   * Format:
+   *
+   * <IP>,<Port>,<Country ID>,<ORG>
+   * Contoh:
+   * 1.1.1.1,443,SG,Cloudflare Inc.
+   */
+  if (!proxyBankUrl) {
+    throw new Error("No Proxy Bank URL Provided!");
+  }
 
-if (!isValidUUID(userID)) {
-	throw new Error('uuid is invalid');
+  const proxyBank = await fetch(proxyBankUrl);
+  if (proxyBank.status == 200) {
+    const text = (await proxyBank.text()) || "";
+
+    const proxyString = text.split("\n").filter(Boolean);
+    cachedProxyList = proxyString
+      .map((entry) => {
+        const [proxyIP, proxyPort, country, org] = entry.split(",");
+        return {
+          proxyIP: proxyIP || "Unknown",
+          proxyPort: proxyPort || "Unknown",
+          country: country || "Unknown",
+          org: org || "Unknown Org",
+        };
+      })
+      .filter(Boolean);
+  }
+
+  return cachedProxyList;
+}
+
+async function reverseProxy(request, target, targetPath) {
+  const targetUrl = new URL(request.url);
+  const targetChunk = target.split(":");
+
+  targetUrl.hostname = targetChunk[0];
+  targetUrl.port = targetChunk[1]?.toString() || "443";
+  targetUrl.pathname = targetPath || targetUrl.pathname;
+
+  const modifiedRequest = new Request(targetUrl, request);
+
+  modifiedRequest.headers.set("X-Forwarded-Host", request.headers.get("Host"));
+
+  const response = await fetch(modifiedRequest);
+
+  const newResponse = new Response(response.body, response);
+  for (const [key, value] of Object.entries(CORS_HEADER_OPTIONS)) {
+    newResponse.headers.set(key, value);
+  }
+  newResponse.headers.set("X-Proxied-By", "Cloudflare Worker");
+
+  return newResponse;
+}
+
+function getAllConfig(request, hostName, proxyList, page = 0) {
+  const startIndex = PROXY_PER_PAGE * page;
+
+  try {
+    const uuid = crypto.randomUUID();
+
+    // Build URI
+    const uri = new URL(`${reverse("najort")}://${hostName}`);
+    uri.searchParams.set("encryption", "none");
+    uri.searchParams.set("type", "ws");
+    uri.searchParams.set("host", hostName);
+
+    // Build HTML
+    const document = new Document(request);
+    document.setTitle("Welcome to <span class='text-blue-500 font-semibold'>Rider</span>");
+    document.addInfo(`Total: ${proxyList.length}`);
+    document.addInfo(`Page: ${page}/${Math.floor(proxyList.length / PROXY_PER_PAGE)}`);
+
+    for (let i = startIndex; i < startIndex + PROXY_PER_PAGE; i++) {
+      const proxy = proxyList[i];
+      if (!proxy) break;
+
+      const { proxyIP, proxyPort, country, org } = proxy;
+
+      uri.searchParams.set("path", `/${proxyIP}-${proxyPort}`);
+
+      const proxies = [];
+      for (const port of PORTS) {
+        uri.port = port.toString();
+        uri.hash = `${i + 1} ${getFlagEmoji(country)} ${org} WS ${port == 443 ? "TLS" : "NTLS"} [${serviceName}]`;
+        for (const protocol of PROTOCOLS) {
+          // Special exceptions
+          if (protocol === "ss") {
+            uri.username = btoa(`none:${uuid}`);
+            uri.searchParams.set(
+              "plugin",
+              `v2ray-plugin${
+                port == 80 ? "" : ";tls"
+              };mux=0;mode=websocket;path=/${proxyIP}-${proxyPort};host=${hostName}`
+            );
+          } else {
+            uri.username = uuid;
+            uri.searchParams.delete("plugin");
+          }
+
+          uri.protocol = protocol;
+          uri.searchParams.set("security", port == 443 ? "tls" : "none");
+          uri.searchParams.set("sni", port == 80 && protocol == reverse("sselv") ? "" : hostName);
+
+          // Build VPN URI
+          proxies.push(uri.toString());
+        }
+      }
+      document.registerProxies(
+        {
+          proxyIP,
+          proxyPort,
+          country,
+          org,
+        },
+        proxies
+      );
+    }
+
+    // Build pagination
+    document.addPageButton("Prev", `/sub/${page > 0 ? page - 1 : 0}`, page > 0 ? false : true);
+    document.addPageButton("Next", `/sub/${page + 1}`, page < Math.floor(proxyList.length / 10) ? false : true);
+
+    return document.build();
+  } catch (error) {
+    return `An error occurred while generating the ${reverse("SSELV")} configurations. ${error}`;
+  }
 }
 
 export default {
-	/**
-	 * @param {import("@cloudflare/workers-types").Request} request
-	 * @param {{UUID: string, พร็อกซีไอพี: string, DNS_RESOLVER_URL: string, NODE_ID: int, API_HOST: string, API_TOKEN: string}} env
-	 * @param {import("@cloudflare/workers-types").ExecutionContext} ctx
-	 * @returns {Promise<Response>}
-	 */
-	async fetch(request, env, ctx) {
-		// uuid_validator(request);
-		try {
-			userID = env.UUID || userID;
-			พร็อกซีไอพี = env.PROXYIP || พร็อกซีไอพี;
-			dohURL = env.DNS_RESOLVER_URL || dohURL;
-			let userID_Path = userID;
-			if (userID.includes(',')) {
-				userID_Path = userID.split(',')[0];
-			}
-			const upgradeHeader = request.headers.get('Upgrade');
-			if (!upgradeHeader || upgradeHeader !== 'websocket') {
-				const url = new URL(request.url);
-				switch (url.pathname) {
-					case `/cf`: {
-						return new Response(JSON.stringify(request.cf, null, 4), {
-							status: 200,
-							headers: {
-								"Content-Type": "application/json;charset=utf-8",
-							},
-						});
-					}
-					case `/${userID_Path}`: {
-						const วเลสConfig = getวเลสConfig(userID, request.headers.get('Host'));
-						return new Response(`${วเลสConfig}`, {
-							status: 200,
-							headers: {
-								"Content-Type": "text/html; charset=utf-8",
-							}
-						});
-					};
-					case `/sub/${userID_Path}`: {
-						const url = new URL(request.url);
-						const searchParams = url.searchParams;
-						const วเลสSubConfig = สร้างวเลสSub(userID, request.headers.get('Host'));
-						// Construct and return response object
-						return new Response(btoa(วเลสSubConfig), {
-							status: 200,
-							headers: {
-								"Content-Type": "text/plain;charset=utf-8",
-							}
-						});
-					};
-					case `/bestip/${userID_Path}`: {
-						const headers = request.headers;
-						const url = `https://sub.xf.free.hr/auto?host=${request.headers.get('Host')}&uuid=${userID}&path=/`;
-						const bestSubConfig = await fetch(url, { headers: headers });
-						return bestSubConfig;
-					};
-					default:
-						// return new Response('Not found', { status: 404 });
-						// For any other path, reverse proxy to 'ramdom website' and return the original response, caching it in the process
-						const randomHostname = cn_hostnames[Math.floor(Math.random() * cn_hostnames.length)];
-						const newHeaders = new Headers(request.headers);
-						newHeaders.set('cf-connecting-ip', '1.2.3.4');
-						newHeaders.set('x-forwarded-for', '1.2.3.4');
-						newHeaders.set('x-real-ip', '1.2.3.4');
-						newHeaders.set('referer', 'https://www.google.com/search?q=edtunnel');
-						// Use fetch to proxy the request to 15 different domains
-						const proxyUrl = 'https://' + randomHostname + url.pathname + url.search;
-						let modifiedRequest = new Request(proxyUrl, {
-							method: request.method,
-							headers: newHeaders,
-							body: request.body,
-							redirect: 'manual',
-						});
-						const proxyResponse = await fetch(modifiedRequest, { redirect: 'manual' });
-						// Check for 302 or 301 redirect status and return an error response
-						if ([301, 302].includes(proxyResponse.status)) {
-							return new Response(`Redirects to ${randomHostname} are not allowed.`, {
-								status: 403,
-								statusText: 'Forbidden',
-							});
-						}
-						// Return the response from the proxy server
-						return proxyResponse;
-				}
-			} else {
-				return await วเลสOverWSHandler(request);
-			}
-		} catch (err) {
-			/** @type {Error} */ let e = err;
-			return new Response(e.toString());
-		}
-	},
+  async fetch(request, env, ctx) {
+    try {
+      const url = new URL(request.url);
+      const upgradeHeader = request.headers.get("Upgrade");
+
+      // Gateway check
+      if (apiKey && apiEmail && accountID && zoneID) {
+        isApiReady = true;
+      }
+
+      // Handle proxy client
+      if (upgradeHeader === "websocket") {
+        const proxyMatch = url.pathname.match(/^\/(.+[:=-]\d+)$/);
+
+        if (url.pathname.length == 3 || url.pathname.match(",")) {
+          // Contoh: /ID, /SG, dll
+          const proxyKeys = url.pathname.replace("/", "").toUpperCase().split(",");
+          const proxyKey = proxyKeys[Math.floor(Math.random() * proxyKeys.length)];
+          const kvProxy = await getKVProxyList();
+
+          proxyIP = kvProxy[proxyKey][Math.floor(Math.random() * kvProxy[proxyKey].length)];
+
+          return await websocketHandler(request);
+        } else if (proxyMatch) {
+          proxyIP = proxyMatch[1];
+          return await websocketHandler(request);
+        }
+      }
+
+      if (url.pathname.startsWith("/sub")) {
+        const page = url.pathname.match(/^\/sub\/(\d+)$/);
+        const pageIndex = parseInt(page ? page[1] : "0");
+        const hostname = request.headers.get("Host");
+
+        // Queries
+        const countrySelect = url.searchParams.get("cc")?.split(",");
+        const proxyBankUrl = url.searchParams.get("proxy-list") || env.PROXY_BANK_URL;
+        let proxyList = (await getProxyList(proxyBankUrl)).filter((proxy) => {
+          // Filter proxies by Country
+          if (countrySelect) {
+            return countrySelect.includes(proxy.country);
+          }
+
+          return true;
+        });
+
+        const result = getAllConfig(request, hostname, proxyList, pageIndex);
+        return new Response(result, {
+          status: 200,
+          headers: { "Content-Type": "text/html;charset=utf-8" },
+        });
+      } else if (url.pathname.startsWith("/check")) {
+        const target = url.searchParams.get("target").split(":");
+        const result = await checkProxyHealth(target[0], target[1] || "443");
+
+        return new Response(JSON.stringify(result), {
+          status: 200,
+          headers: {
+            ...CORS_HEADER_OPTIONS,
+            "Content-Type": "application/json",
+          },
+        });
+      } else if (url.pathname.startsWith("/api/v1")) {
+        const apiPath = url.pathname.replace("/api/v1", "");
+
+        if (apiPath.startsWith("/domains")) {
+          if (!isApiReady) {
+            return new Response("Api not ready", {
+              status: 500,
+            });
+          }
+
+          const wildcardApiPath = apiPath.replace("/domains", "");
+          const cloudflareApi = new CloudflareApi();
+
+          if (wildcardApiPath == "/get") {
+            const domains = await cloudflareApi.getDomainList();
+            return new Response(JSON.stringify(domains), {
+              headers: {
+                ...CORS_HEADER_OPTIONS,
+              },
+            });
+          } else if (wildcardApiPath == "/put") {
+            const domain = url.searchParams.get("domain");
+            const register = await cloudflareApi.registerDomain(domain);
+
+            return new Response(register.toString(), {
+              status: register,
+              headers: {
+                ...CORS_HEADER_OPTIONS,
+              },
+            });
+          }
+        } else if (apiPath.startsWith("/sub")) {
+          const filterCC = url.searchParams.get("cc")?.split(",") || [];
+          const filterPort = url.searchParams.get("port")?.split(",") || PORTS;
+          const filterVPN = url.searchParams.get("vpn")?.split(",") || PROTOCOLS;
+          const filterLimit = parseInt(url.searchParams.get("limit")) || 10;
+          const filterFormat = url.searchParams.get("format") || "raw";
+          const fillerDomain = url.searchParams.get("domain") || APP_DOMAIN;
+
+          const proxyBankUrl = url.searchParams.get("proxy-list") || env.PROXY_BANK_URL;
+          const proxyList = await getProxyList(proxyBankUrl)
+            .then((proxies) => {
+              // Filter CC
+              if (filterCC.length) {
+                return proxies.filter((proxy) => filterCC.includes(proxy.country));
+              }
+              return proxies;
+            })
+            .then((proxies) => {
+              // shuffle result
+              shuffleArray(proxies);
+              return proxies;
+            });
+
+          const uuid = crypto.randomUUID();
+          const result = [];
+          for (const proxy of proxyList) {
+            const uri = new URL(`${reverse("najort")}://${fillerDomain}`);
+            uri.searchParams.set("encryption", "none");
+            uri.searchParams.set("type", "ws");
+            uri.searchParams.set("host", APP_DOMAIN);
+
+            for (const port of filterPort) {
+              for (const protocol of filterVPN) {
+                if (result.length >= filterLimit) break;
+
+                uri.protocol = protocol;
+                uri.port = port.toString();
+                if (protocol == "ss") {
+                  uri.username = btoa(`none:${uuid}`);
+                  uri.searchParams.set(
+                    "plugin",
+                    `v2ray-plugin${port == 80 ? "" : ";tls"};mux=0;mode=websocket;path=/${proxy.proxyIP}-${
+                      proxy.proxyPort
+                    };host=${APP_DOMAIN}`
+                  );
+                } else {
+                  uri.username = uuid;
+                }
+
+                uri.searchParams.set("security", port == 443 ? "tls" : "none");
+                uri.searchParams.set("sni", port == 80 && protocol == reverse("sselv") ? "" : APP_DOMAIN);
+                uri.searchParams.set("path", `/${proxy.proxyIP}-${proxy.proxyPort}`);
+
+                uri.hash = `${result.length + 1} ${getFlagEmoji(proxy.country)} ${proxy.org} WS ${
+                  port == 443 ? "TLS" : "NTLS"
+                } [${serviceName}]`;
+                result.push(uri.toString());
+              }
+            }
+          }
+
+          let finalResult = "";
+          switch (filterFormat) {
+            case "raw":
+              finalResult = result.join("\n");
+              break;
+            case "v2ray":
+              finalResult = btoa(result.join("\n"));
+              break;
+            case "clash":
+            case "sfa":
+            case "bfr":
+              const res = await fetch(CONVERTER_URL, {
+                method: "POST",
+                body: JSON.stringify({
+                  url: result.join(","),
+                  format: filterFormat,
+                  template: "cf",
+                }),
+              });
+              if (res.status == 200) {
+                finalResult = await res.text();
+              } else {
+                return new Response(res.statusText, {
+                  status: res.status,
+                  headers: {
+                    ...CORS_HEADER_OPTIONS,
+                  },
+                });
+              }
+              break;
+          }
+
+          return new Response(finalResult, {
+            status: 200,
+            headers: {
+              ...CORS_HEADER_OPTIONS,
+            },
+          });
+        } else if (apiPath.startsWith("/myip")) {
+          return new Response(
+            JSON.stringify({
+              ip:
+                request.headers.get("cf-connecting-ipv6") ||
+                request.headers.get("cf-connecting-ip") ||
+                request.headers.get("x-real-ip"),
+              colo: request.headers.get("cf-ray")?.split("-")[1],
+              ...request.cf,
+            }),
+            {
+              headers: {
+                ...CORS_HEADER_OPTIONS,
+              },
+            }
+          );
+        }
+      }
+
+      const targetReverseProxy = env.REVERSE_PROXY_TARGET || "example.com";
+      return await reverseProxy(request, targetReverseProxy);
+    } catch (err) {
+      return new Response(`An error occurred: ${err.toString()}`, {
+        status: 500,
+        headers: {
+          ...CORS_HEADER_OPTIONS,
+        },
+      });
+    }
+  },
 };
 
-export async function uuid_validator(request) {
-	const hostname = request.headers.get('Host');
-	const currentDate = new Date();
+async function websocketHandler(request) {
+  const webSocketPair = new WebSocketPair();
+  const [client, webSocket] = Object.values(webSocketPair);
 
-	const subdomain = hostname.split('.')[0];
-	const year = currentDate.getFullYear();
-	const month = String(currentDate.getMonth() + 1).padStart(2, '0');
-	const day = String(currentDate.getDate()).padStart(2, '0');
+  webSocket.accept();
 
-	const formattedDate = `${year}-${month}-${day}`;
+  let addressLog = "";
+  let portLog = "";
+  const log = (info, event) => {
+    console.log(`[${addressLog}:${portLog}] ${info}`, event || "");
+  };
+  const earlyDataHeader = request.headers.get("sec-websocket-protocol") || "";
 
-	// const daliy_sub = formattedDate + subdomain
-	const hashHex = await hashHex_f(subdomain);
-	// subdomain string contains timestamps utc and uuid string TODO.
-	console.log(hashHex, subdomain, formattedDate);
+  const readableWebSocketStream = makeReadableWebSocketStream(webSocket, earlyDataHeader, log);
+
+  let remoteSocketWrapper = {
+    value: null,
+  };
+  let isDNS = false;
+
+  readableWebSocketStream
+    .pipeTo(
+      new WritableStream({
+        async write(chunk, controller) {
+          if (isDNS) {
+            return handleUDPOutbound(DNS_SERVER_ADDRESS, DNS_SERVER_PORT, chunk, webSocket, null, log);
+          }
+          if (remoteSocketWrapper.value) {
+            const writer = remoteSocketWrapper.value.writable.getWriter();
+            await writer.write(chunk);
+            writer.releaseLock();
+            return;
+          }
+
+          const protocol = await protocolSniffer(chunk);
+          let protocolHeader;
+
+          if (protocol === reverse("najorT")) {
+            protocolHeader = parseNajortHeader(chunk);
+          } else if (protocol === reverse("SSELV")) {
+            protocolHeader = parseSselvHeader(chunk);
+          } else if (protocol === reverse("skcoswodahS")) {
+            protocolHeader = parseSsHeader(chunk);
+          } else {
+            throw new Error("Unknown Protocol!");
+          }
+
+          addressLog = protocolHeader.addressRemote;
+          portLog = `${protocolHeader.portRemote} -> ${protocolHeader.isUDP ? "UDP" : "TCP"}`;
+
+          if (protocolHeader.hasError) {
+            throw new Error(protocolHeader.message);
+          }
+
+          if (protocolHeader.isUDP) {
+            if (protocolHeader.portRemote === 53) {
+              isDNS = true;
+            } else {
+              // return handleUDPOutbound(protocolHeader.addressRemote, protocolHeader.portRemote, chunk, webSocket, protocolHeader.version, log);
+              throw new Error("UDP only support for DNS port 53");
+            }
+          }
+
+          if (isDNS) {
+            return handleUDPOutbound(
+              DNS_SERVER_ADDRESS,
+              DNS_SERVER_PORT,
+              chunk,
+              webSocket,
+              protocolHeader.version,
+              log
+            );
+          }
+
+          handleTCPOutBound(
+            remoteSocketWrapper,
+            protocolHeader.addressRemote,
+            protocolHeader.portRemote,
+            protocolHeader.rawClientData,
+            webSocket,
+            protocolHeader.version,
+            log
+          );
+        },
+        close() {
+          log(`readableWebSocketStream is close`);
+        },
+        abort(reason) {
+          log(`readableWebSocketStream is abort`, JSON.stringify(reason));
+        },
+      })
+    )
+    .catch((err) => {
+      log("readableWebSocketStream pipeTo error", err);
+    });
+
+  return new Response(null, {
+    status: 101,
+    webSocket: client,
+  });
 }
 
-export async function hashHex_f(string) {
-	const encoder = new TextEncoder();
-	const data = encoder.encode(string);
-	const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-	const hashArray = Array.from(new Uint8Array(hashBuffer));
-	const hashHex = hashArray.map(byte => byte.toString(16).padStart(2, '0')).join('');
-	return hashHex;
+async function protocolSniffer(buffer) {
+  if (buffer.byteLength >= 62) {
+    const najortDelimiter = new Uint8Array(buffer.slice(56, 60));
+    if (najortDelimiter[0] === 0x0d && najortDelimiter[1] === 0x0a) {
+      if (najortDelimiter[2] === 0x01 || najortDelimiter[2] === 0x03 || najortDelimiter[2] === 0x7f) {
+        if (najortDelimiter[3] === 0x01 || najortDelimiter[3] === 0x03 || najortDelimiter[3] === 0x04) {
+          return reverse("najorT");
+        }
+      }
+    }
+  }
+
+  const sselvDelimiter = new Uint8Array(buffer.slice(1, 17));
+  // Hanya mendukung UUID v4
+  if (arrayBufferToHex(sselvDelimiter).match(/^[0-9a-f]{8}[0-9a-f]{4}4[0-9a-f]{3}[89ab][0-9a-f]{3}[0-9a-f]{12}$/i)) {
+    return reverse("SSELV");
+  }
+
+  return reverse("skcoswodahS"); // default
 }
 
-/**
- * Handles วเลส over WebSocket requests by creating a WebSocket pair, accepting the WebSocket connection, and processing the วเลส header.
- * @param {import("@cloudflare/workers-types").Request} request The incoming request object.
- * @returns {Promise<Response>} A Promise that resolves to a WebSocket response object.
- */
-async function วเลสOverWSHandler(request) {
-	const webSocketPair = new WebSocketPair();
-	const [client, webSocket] = Object.values(webSocketPair);
-	webSocket.accept();
+async function handleTCPOutBound(
+  remoteSocket,
+  addressRemote,
+  portRemote,
+  rawClientData,
+  webSocket,
+  responseHeader,
+  log
+) {
+  async function connectAndWrite(address, port) {
+    const tcpSocket = connect({
+      hostname: address,
+      port: port,
+    });
+    remoteSocket.value = tcpSocket;
+    log(`connected to ${address}:${port}`);
+    const writer = tcpSocket.writable.getWriter();
+    await writer.write(rawClientData);
+    writer.releaseLock();
 
-	let address = '';
-	let portWithRandomLog = '';
-	let currentDate = new Date();
-	const log = (/** @type {string} */ info, /** @type {string | undefined} */ event) => {
-		console.log(`[${currentDate} ${address}:${portWithRandomLog}] ${info}`, event || '');
-	};
-	const earlyDataHeader = request.headers.get('sec-websocket-protocol') || '';
+    return tcpSocket;
+  }
 
-	const readableWebSocketStream = makeReadableWebSocketStream(webSocket, earlyDataHeader, log);
+  async function retry() {
+    const tcpSocket = await connectAndWrite(
+      proxyIP.split(/[:=-]/)[0] || addressRemote,
+      proxyIP.split(/[:=-]/)[1] || portRemote
+    );
+    tcpSocket.closed
+      .catch((error) => {
+        console.log("retry tcpSocket closed error", error);
+      })
+      .finally(() => {
+        safeCloseWebSocket(webSocket);
+      });
+    remoteSocketToWS(tcpSocket, webSocket, responseHeader, null, log);
+  }
 
-	/** @type {{ value: import("@cloudflare/workers-types").Socket | null}}*/
-	let remoteSocketWapper = {
-		value: null,
-	};
-	let udpStreamWrite = null;
-	let isDns = false;
+  const tcpSocket = await connectAndWrite(addressRemote, portRemote);
 
-	// ws --> remote
-	readableWebSocketStream.pipeTo(new WritableStream({
-		async write(chunk, controller) {
-			if (isDns && udpStreamWrite) {
-				return udpStreamWrite(chunk);
-			}
-			if (remoteSocketWapper.value) {
-				const writer = remoteSocketWapper.value.writable.getWriter()
-				await writer.write(chunk);
-				writer.releaseLock();
-				return;
-			}
-
-			const {
-				hasError,
-				message,
-				portRemote = 443,
-				addressRemote = '',
-				rawDataIndex,
-				วเลสVersion = new Uint8Array([0, 0]),
-				isUDP,
-			} = processวเลสHeader(chunk, userID);
-			address = addressRemote;
-			portWithRandomLog = `${portRemote} ${isUDP ? 'udp' : 'tcp'} `;
-			if (hasError) {
-				// controller.error(message);
-				throw new Error(message); // cf seems has bug, controller.error will not end stream
-			}
-
-			// If UDP and not DNS port, close it
-			if (isUDP && portRemote !== 53) {
-				throw new Error('UDP proxy only enabled for DNS which is port 53');
-				// cf seems has bug, controller.error will not end stream
-			}
-
-			if (isUDP && portRemote === 53) {
-				isDns = true;
-			}
-
-			// ["version", "附加信息长度 N"]
-			const วเลสResponseHeader = new Uint8Array([วเลสVersion[0], 0]);
-			const rawClientData = chunk.slice(rawDataIndex);
-
-			// TODO: support udp here when cf runtime has udp support
-			if (isDns) {
-				const { write } = await handleUDPOutBound(webSocket, วเลสResponseHeader, log);
-				udpStreamWrite = write;
-				udpStreamWrite(rawClientData);
-				return;
-			}
-			handleTCPOutBound(remoteSocketWapper, addressRemote, portRemote, rawClientData, webSocket, วเลสResponseHeader, log);
-		},
-		close() {
-			log(`readableWebSocketStream is close`);
-		},
-		abort(reason) {
-			log(`readableWebSocketStream is abort`, JSON.stringify(reason));
-		},
-	})).catch((err) => {
-		log('readableWebSocketStream pipeTo error', err);
-	});
-
-	return new Response(null, {
-		status: 101,
-		webSocket: client,
-	});
+  remoteSocketToWS(tcpSocket, webSocket, responseHeader, retry, log);
 }
 
-/**
- * Handles outbound TCP connections.
- *
- * @param {any} remoteSocket 
- * @param {string} addressRemote The remote address to connect to.
- * @param {number} portRemote The remote port to connect to.
- * @param {Uint8Array} rawClientData The raw client data to write.
- * @param {import("@cloudflare/workers-types").WebSocket} webSocket The WebSocket to pass the remote socket to.
- * @param {Uint8Array} วเลสResponseHeader The วเลส response header.
- * @param {function} log The logging function.
- * @returns {Promise<void>} The remote socket.
- */
-async function handleTCPOutBound(remoteSocket, addressRemote, portRemote, rawClientData, webSocket, วเลสResponseHeader, log,) {
+async function handleUDPOutbound(targetAddress, targetPort, udpChunk, webSocket, responseHeader, log) {
+  try {
+    let protocolHeader = responseHeader;
+    const tcpSocket = connect({
+      hostname: targetAddress,
+      port: targetPort,
+    });
 
-	/**
-	 * Connects to a given address and port and writes data to the socket.
-	 * @param {string} address The address to connect to.
-	 * @param {number} port The port to connect to.
-	 * @returns {Promise<import("@cloudflare/workers-types").Socket>} A Promise that resolves to the connected socket.
-	 */
-	async function connectAndWrite(address, port) {
-		/** @type {import("@cloudflare/workers-types").Socket} */
-		const tcpSocket = connect({
-			hostname: address,
-			port: port,
-		});
-		remoteSocket.value = tcpSocket;
-		log(`connected to ${address}:${port}`);
-		const writer = tcpSocket.writable.getWriter();
-		await writer.write(rawClientData); // first write, nomal is tls client hello
-		writer.releaseLock();
-		return tcpSocket;
-	}
+    log(`Connected to ${targetAddress}:${targetPort}`);
 
-	/**
-	 * Retries connecting to the remote address and port if the Cloudflare socket has no incoming data.
-	 * @returns {Promise<void>} A Promise that resolves when the retry is complete.
-	 */
-	async function retry() {
-		const tcpSocket = await connectAndWrite(พร็อกซีไอพี || addressRemote, portRemote)
-		tcpSocket.closed.catch(error => {
-			console.log('retry tcpSocket closed error', error);
-		}).finally(() => {
-			safeCloseWebSocket(webSocket);
-		})
-		remoteSocketToWS(tcpSocket, webSocket, วเลสResponseHeader, null, log);
-	}
+    const writer = tcpSocket.writable.getWriter();
+    await writer.write(udpChunk);
+    writer.releaseLock();
 
-	const tcpSocket = await connectAndWrite(addressRemote, portRemote);
-
-	// when remoteSocket is ready, pass to websocket
-	// remote--> ws
-	remoteSocketToWS(tcpSocket, webSocket, วเลสResponseHeader, retry, log);
+    await tcpSocket.readable.pipeTo(
+      new WritableStream({
+        async write(chunk) {
+          if (webSocket.readyState === WS_READY_STATE_OPEN) {
+            if (protocolHeader) {
+              webSocket.send(await new Blob([protocolHeader, chunk]).arrayBuffer());
+              protocolHeader = null;
+            } else {
+              webSocket.send(chunk);
+            }
+          }
+        },
+        close() {
+          log(`UDP connection to ${targetAddress} closed`);
+        },
+        abort(reason) {
+          console.error(`UDP connection to ${targetPort} aborted due to ${reason}`);
+        },
+      })
+    );
+  } catch (e) {
+    console.error(`Error while handling UDP outbound, error ${e.message}`);
+  }
 }
 
-/**
- * Creates a readable stream from a WebSocket server, allowing for data to be read from the WebSocket.
- * @param {import("@cloudflare/workers-types").WebSocket} webSocketServer The WebSocket server to create the readable stream from.
- * @param {string} earlyDataHeader The header containing early data for WebSocket 0-RTT.
- * @param {(info: string)=> void} log The logging function.
- * @returns {ReadableStream} A readable stream that can be used to read data from the WebSocket.
- */
 function makeReadableWebSocketStream(webSocketServer, earlyDataHeader, log) {
-	let readableStreamCancel = false;
-	const stream = new ReadableStream({
-		start(controller) {
-			webSocketServer.addEventListener('message', (event) => {
-				const message = event.data;
-				controller.enqueue(message);
-			});
+  let readableStreamCancel = false;
+  const stream = new ReadableStream({
+    start(controller) {
+      webSocketServer.addEventListener("message", (event) => {
+        if (readableStreamCancel) {
+          return;
+        }
+        const message = event.data;
+        controller.enqueue(message);
+      });
+      webSocketServer.addEventListener("close", () => {
+        safeCloseWebSocket(webSocketServer);
+        if (readableStreamCancel) {
+          return;
+        }
+        controller.close();
+      });
+      webSocketServer.addEventListener("error", (err) => {
+        log("webSocketServer has error");
+        controller.error(err);
+      });
+      const { earlyData, error } = base64ToArrayBuffer(earlyDataHeader);
+      if (error) {
+        controller.error(error);
+      } else if (earlyData) {
+        controller.enqueue(earlyData);
+      }
+    },
 
-			webSocketServer.addEventListener('close', () => {
-				safeCloseWebSocket(webSocketServer);
-				controller.close();
-			});
+    pull(controller) {},
+    cancel(reason) {
+      if (readableStreamCancel) {
+        return;
+      }
+      log(`ReadableStream was canceled, due to ${reason}`);
+      readableStreamCancel = true;
+      safeCloseWebSocket(webSocketServer);
+    },
+  });
 
-			webSocketServer.addEventListener('error', (err) => {
-				log('webSocketServer has error');
-				controller.error(err);
-			});
-			const { earlyData, error } = base64ToArrayBuffer(earlyDataHeader);
-			if (error) {
-				controller.error(error);
-			} else if (earlyData) {
-				controller.enqueue(earlyData);
-			}
-		},
-
-		pull(controller) {
-			// if ws can stop read if stream is full, we can implement backpressure
-			// https://streams.spec.whatwg.org/#example-rs-push-backpressure
-		},
-
-		cancel(reason) {
-			log(`ReadableStream was canceled, due to ${reason}`)
-			readableStreamCancel = true;
-			safeCloseWebSocket(webSocketServer);
-		}
-	});
-
-	return stream;
+  return stream;
 }
 
-// https://xtls.github.io/development/protocols/วเลส.html
-// https://github.com/zizifn/excalidraw-backup/blob/main/v2ray-protocol.excalidraw
+function parseSsHeader(ssBuffer) {
+  const view = new DataView(ssBuffer);
 
-/**
- * Processes the วเลส header buffer and returns an object with the relevant information.
- * @param {ArrayBuffer} วเลสBuffer The วเลส header buffer to process.
- * @param {string} userID The user ID to validate against the UUID in the วเลส header.
- * @returns {{
- *  hasError: boolean,
- *  message?: string,
- *  addressRemote?: string,
- *  addressType?: number,
- *  portRemote?: number,
- *  rawDataIndex?: number,
- *  วเลสVersion?: Uint8Array,
- *  isUDP?: boolean
- * }} An object with the relevant information extracted from the วเลส header buffer.
- */
-function processวเลสHeader(วเลสBuffer, userID) {
-	if (วเลสBuffer.byteLength < 24) {
-		return {
-			hasError: true,
-			message: 'invalid data',
-		};
-	}
+  const addressType = view.getUint8(0);
+  let addressLength = 0;
+  let addressValueIndex = 1;
+  let addressValue = "";
 
-	const version = new Uint8Array(วเลสBuffer.slice(0, 1));
-	let isValidUser = false;
-	let isUDP = false;
-	const slicedBuffer = new Uint8Array(วเลสBuffer.slice(1, 17));
-	const slicedBufferString = stringify(slicedBuffer);
-	// check if userID is valid uuid or uuids split by , and contains userID in it otherwise return error message to console
-	const uuids = userID.includes(',') ? userID.split(",") : [userID];
-	// uuid_validator(hostName, slicedBufferString);
+  switch (addressType) {
+    case 1:
+      addressLength = 4;
+      addressValue = new Uint8Array(ssBuffer.slice(addressValueIndex, addressValueIndex + addressLength)).join(".");
+      break;
+    case 3:
+      addressLength = new Uint8Array(ssBuffer.slice(addressValueIndex, addressValueIndex + 1))[0];
+      addressValueIndex += 1;
+      addressValue = new TextDecoder().decode(ssBuffer.slice(addressValueIndex, addressValueIndex + addressLength));
+      break;
+    case 4:
+      addressLength = 16;
+      const dataView = new DataView(ssBuffer.slice(addressValueIndex, addressValueIndex + addressLength));
+      const ipv6 = [];
+      for (let i = 0; i < 8; i++) {
+        ipv6.push(dataView.getUint16(i * 2).toString(16));
+      }
+      addressValue = ipv6.join(":");
+      break;
+    default:
+      return {
+        hasError: true,
+        message: `Invalid addressType for ${reverse("skcoswodahS")}: ${addressType}`,
+      };
+  }
 
+  if (!addressValue) {
+    return {
+      hasError: true,
+      message: `Destination address empty, address type is: ${addressType}`,
+    };
+  }
 
-	// isValidUser = uuids.some(userUuid => slicedBufferString === userUuid.trim());
-	isValidUser = uuids.some(userUuid => slicedBufferString === userUuid.trim()) || uuids.length === 1 && slicedBufferString === uuids[0].trim();
-
-	console.log(`userID: ${slicedBufferString}`);
-
-	if (!isValidUser) {
-		return {
-			hasError: true,
-			message: 'invalid user',
-		};
-	}
-
-	const optLength = new Uint8Array(วเลสBuffer.slice(17, 18))[0];
-	//skip opt for now
-
-	const command = new Uint8Array(
-		วเลสBuffer.slice(18 + optLength, 18 + optLength + 1)
-	)[0];
-
-	// 0x01 TCP
-	// 0x02 UDP
-	// 0x03 MUX
-	if (command === 1) {
-		isUDP = false;
-	} else if (command === 2) {
-		isUDP = true;
-	} else {
-		return {
-			hasError: true,
-			message: `command ${command} is not support, command 01-tcp,02-udp,03-mux`,
-		};
-	}
-	const portIndex = 18 + optLength + 1;
-	const portBuffer = วเลสBuffer.slice(portIndex, portIndex + 2);
-	// port is big-Endian in raw data etc 80 == 0x005d
-	const portRemote = new DataView(portBuffer).getUint16(0);
-
-	let addressIndex = portIndex + 2;
-	const addressBuffer = new Uint8Array(
-		วเลสBuffer.slice(addressIndex, addressIndex + 1)
-	);
-
-	// 1--> ipv4  addressLength =4
-	// 2--> domain name addressLength=addressBuffer[1]
-	// 3--> ipv6  addressLength =16
-	const addressType = addressBuffer[0];
-	let addressLength = 0;
-	let addressValueIndex = addressIndex + 1;
-	let addressValue = '';
-	switch (addressType) {
-		case 1:
-			addressLength = 4;
-			addressValue = new Uint8Array(
-				วเลสBuffer.slice(addressValueIndex, addressValueIndex + addressLength)
-			).join('.');
-			break;
-		case 2:
-			addressLength = new Uint8Array(
-				วเลสBuffer.slice(addressValueIndex, addressValueIndex + 1)
-			)[0];
-			addressValueIndex += 1;
-			addressValue = new TextDecoder().decode(
-				วเลสBuffer.slice(addressValueIndex, addressValueIndex + addressLength)
-			);
-			break;
-		case 3:
-			addressLength = 16;
-			const dataView = new DataView(
-				วเลสBuffer.slice(addressValueIndex, addressValueIndex + addressLength)
-			);
-			// 2001:0db8:85a3:0000:0000:8a2e:0370:7334
-			const ipv6 = [];
-			for (let i = 0; i < 8; i++) {
-				ipv6.push(dataView.getUint16(i * 2).toString(16));
-			}
-			addressValue = ipv6.join(':');
-			// seems no need add [] for ipv6
-			break;
-		default:
-			return {
-				hasError: true,
-				message: `invild  addressType is ${addressType}`,
-			};
-	}
-	if (!addressValue) {
-		return {
-			hasError: true,
-			message: `addressValue is empty, addressType is ${addressType}`,
-		};
-	}
-
-	return {
-		hasError: false,
-		addressRemote: addressValue,
-		addressType,
-		portRemote,
-		rawDataIndex: addressValueIndex + addressLength,
-		วเลสVersion: version,
-		isUDP,
-	};
+  const portIndex = addressValueIndex + addressLength;
+  const portBuffer = ssBuffer.slice(portIndex, portIndex + 2);
+  const portRemote = new DataView(portBuffer).getUint16(0);
+  return {
+    hasError: false,
+    addressRemote: addressValue,
+    addressType: addressType,
+    portRemote: portRemote,
+    rawDataIndex: portIndex + 2,
+    rawClientData: ssBuffer.slice(portIndex + 2),
+    version: null,
+    isUDP: portRemote == 53,
+  };
 }
 
+function parseSselvHeader(buffer) {
+  const version = new Uint8Array(buffer.slice(0, 1));
+  let isUDP = false;
 
-/**
- * Converts a remote socket to a WebSocket connection.
- * @param {import("@cloudflare/workers-types").Socket} remoteSocket The remote socket to convert.
- * @param {import("@cloudflare/workers-types").WebSocket} webSocket The WebSocket to connect to.
- * @param {ArrayBuffer | null} วเลสResponseHeader The วเลส response header.
- * @param {(() => Promise<void>) | null} retry The function to retry the connection if it fails.
- * @param {(info: string) => void} log The logging function.
- * @returns {Promise<void>} A Promise that resolves when the conversion is complete.
- */
-async function remoteSocketToWS(remoteSocket, webSocket, วเลสResponseHeader, retry, log) {
-	// remote--> ws
-	let remoteChunkCount = 0;
-	let chunks = [];
-	/** @type {ArrayBuffer | null} */
-	let วเลสHeader = วเลสResponseHeader;
-	let hasIncomingData = false; // check if remoteSocket has incoming data
-	await remoteSocket.readable
-		.pipeTo(
-			new WritableStream({
-				start() {
-				},
-				/**
-				 * 
-				 * @param {Uint8Array} chunk 
-				 * @param {*} controller 
-				 */
-				async write(chunk, controller) {
-					hasIncomingData = true;
-					remoteChunkCount++;
-					if (webSocket.readyState !== WS_READY_STATE_OPEN) {
-						controller.error(
-							'webSocket.readyState is not open, maybe close'
-						);
-					}
-					if (วเลสHeader) {
-						webSocket.send(await new Blob([วเลสHeader, chunk]).arrayBuffer());
-						วเลสHeader = null;
-					} else {
-						// console.log(`remoteSocketToWS send chunk ${chunk.byteLength}`);
-						// seems no need rate limit this, CF seems fix this??..
-						// if (remoteChunkCount > 20000) {
-						// 	// cf one package is 4096 byte(4kb),  4096 * 20000 = 80M
-						// 	await delay(1);
-						// }
-						webSocket.send(chunk);
-					}
-				},
-				close() {
-					log(`remoteConnection!.readable is close with hasIncomingData is ${hasIncomingData}`);
-					// safeCloseWebSocket(webSocket); // no need server close websocket frist for some case will casue HTTP ERR_CONTENT_LENGTH_MISMATCH issue, client will send close event anyway.
-				},
-				abort(reason) {
-					console.error(`remoteConnection!.readable abort`, reason);
-				},
-			})
-		)
-		.catch((error) => {
-			console.error(
-				`remoteSocketToWS has exception `,
-				error.stack || error
-			);
-			safeCloseWebSocket(webSocket);
-		});
+  const optLength = new Uint8Array(buffer.slice(17, 18))[0];
 
-	// seems is cf connect socket have error,
-	// 1. Socket.closed will have error
-	// 2. Socket.readable will be close without any data coming
-	if (hasIncomingData === false && retry) {
-		log(`retry`)
-		retry();
-	}
+  const cmd = new Uint8Array(buffer.slice(18 + optLength, 18 + optLength + 1))[0];
+  if (cmd === 1) {
+  } else if (cmd === 2) {
+    isUDP = true;
+  } else {
+    return {
+      hasError: true,
+      message: `command ${cmd} is not support, command 01-tcp,02-udp,03-mux`,
+    };
+  }
+  const portIndex = 18 + optLength + 1;
+  const portBuffer = buffer.slice(portIndex, portIndex + 2);
+  const portRemote = new DataView(portBuffer).getUint16(0);
+
+  let addressIndex = portIndex + 2;
+  const addressBuffer = new Uint8Array(buffer.slice(addressIndex, addressIndex + 1));
+
+  const addressType = addressBuffer[0];
+  let addressLength = 0;
+  let addressValueIndex = addressIndex + 1;
+  let addressValue = "";
+  switch (addressType) {
+    case 1: // For IPv4
+      addressLength = 4;
+      addressValue = new Uint8Array(buffer.slice(addressValueIndex, addressValueIndex + addressLength)).join(".");
+      break;
+    case 2: // For Domain
+      addressLength = new Uint8Array(buffer.slice(addressValueIndex, addressValueIndex + 1))[0];
+      addressValueIndex += 1;
+      addressValue = new TextDecoder().decode(buffer.slice(addressValueIndex, addressValueIndex + addressLength));
+      break;
+    case 3: // For IPv6
+      addressLength = 16;
+      const dataView = new DataView(buffer.slice(addressValueIndex, addressValueIndex + addressLength));
+      const ipv6 = [];
+      for (let i = 0; i < 8; i++) {
+        ipv6.push(dataView.getUint16(i * 2).toString(16));
+      }
+      addressValue = ipv6.join(":");
+      break;
+    default:
+      return {
+        hasError: true,
+        message: `invild  addressType is ${addressType}`,
+      };
+  }
+  if (!addressValue) {
+    return {
+      hasError: true,
+      message: `addressValue is empty, addressType is ${addressType}`,
+    };
+  }
+
+  return {
+    hasError: false,
+    addressRemote: addressValue,
+    addressType: addressType,
+    portRemote: portRemote,
+    rawDataIndex: addressValueIndex + addressLength,
+    rawClientData: buffer.slice(addressValueIndex + addressLength),
+    version: new Uint8Array([version[0], 0]),
+    isUDP: isUDP,
+  };
 }
 
-/**
- * Decodes a base64 string into an ArrayBuffer.
- * @param {string} base64Str The base64 string to decode.
- * @returns {{earlyData: ArrayBuffer|null, error: Error|null}} An object containing the decoded ArrayBuffer or null if there was an error, and any error that occurred during decoding or null if there was no error.
- */
-function base64ToArrayBuffer(base64Str) {
-	if (!base64Str) {
-		return { earlyData: null, error: null };
-	}
-	try {
-		// go use modified Base64 for URL rfc4648 which js atob not support
-		base64Str = base64Str.replace(/-/g, '+').replace(/_/g, '/');
-		const decode = atob(base64Str);
-		const arryBuffer = Uint8Array.from(decode, (c) => c.charCodeAt(0));
-		return { earlyData: arryBuffer.buffer, error: null };
-	} catch (error) {
-		return { earlyData: null, error };
-	}
+function parseNajortHeader(buffer) {
+  const socks5DataBuffer = buffer.slice(58);
+  if (socks5DataBuffer.byteLength < 6) {
+    return {
+      hasError: true,
+      message: "invalid SOCKS5 request data",
+    };
+  }
+
+  let isUDP = false;
+  const view = new DataView(socks5DataBuffer);
+  const cmd = view.getUint8(0);
+  if (cmd == 3) {
+    isUDP = true;
+  } else if (cmd != 1) {
+    throw new Error("Unsupported command type!");
+  }
+
+  let addressType = view.getUint8(1);
+  let addressLength = 0;
+  let addressValueIndex = 2;
+  let addressValue = "";
+  switch (addressType) {
+    case 1: // For IPv4
+      addressLength = 4;
+      addressValue = new Uint8Array(socks5DataBuffer.slice(addressValueIndex, addressValueIndex + addressLength)).join(
+        "."
+      );
+      break;
+    case 3: // For Domain
+      addressLength = new Uint8Array(socks5DataBuffer.slice(addressValueIndex, addressValueIndex + 1))[0];
+      addressValueIndex += 1;
+      addressValue = new TextDecoder().decode(
+        socks5DataBuffer.slice(addressValueIndex, addressValueIndex + addressLength)
+      );
+      break;
+    case 4: // For IPv6
+      addressLength = 16;
+      const dataView = new DataView(socks5DataBuffer.slice(addressValueIndex, addressValueIndex + addressLength));
+      const ipv6 = [];
+      for (let i = 0; i < 8; i++) {
+        ipv6.push(dataView.getUint16(i * 2).toString(16));
+      }
+      addressValue = ipv6.join(":");
+      break;
+    default:
+      return {
+        hasError: true,
+        message: `invalid addressType is ${addressType}`,
+      };
+  }
+
+  if (!addressValue) {
+    return {
+      hasError: true,
+      message: `address is empty, addressType is ${addressType}`,
+    };
+  }
+
+  const portIndex = addressValueIndex + addressLength;
+  const portBuffer = socks5DataBuffer.slice(portIndex, portIndex + 2);
+  const portRemote = new DataView(portBuffer).getUint16(0);
+  return {
+    hasError: false,
+    addressRemote: addressValue,
+    addressType: addressType,
+    portRemote: portRemote,
+    rawDataIndex: portIndex + 4,
+    rawClientData: socks5DataBuffer.slice(portIndex + 4),
+    version: null,
+    isUDP: isUDP,
+  };
 }
 
-/**
- * Checks if a given string is a valid UUID.
- * Note: This is not a real UUID validation.
- * @param {string} uuid The string to validate as a UUID.
- * @returns {boolean} True if the string is a valid UUID, false otherwise.
- */
-function isValidUUID(uuid) {
-	const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[4][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-	return uuidRegex.test(uuid);
+// function parseSsemvHeader(buffer) {
+//   const date = new Date(new Date().toLocaleString("en", { timeZone: "Asia/Jakarta" }));
+//   console.log(`Date: ${date}`);
+//   console.log(`First 16 bytes: ${arrayBufferToHex(buffer.slice(0, 17))}`);
+//   console.log(`Remaining bytes: ${arrayBufferToHex(buffer.slice(17))}`);
+
+//   // ===== KEY GENERATION =====
+//   const userId = "3b670322-6ac1-41ec-9ff3-714245d41bf7";
+//   const uuidConst = "c48619fe-8f02-49e0-b9e9-edf763e17e21";
+
+//   // Step 1: Generate AES key
+//   const key = createHash("md5")
+//     .update(userId + uuidConst)
+//     .digest();
+//   console.log(`KEY: ${key}`);
+
+//   // Step 2: Generate Timestamp (current Unix time)
+//   const timestamp = Math.floor(date.getTime() / 1000); // current timestamp in seconds
+
+//   // Step 3: Generate IV from Timestamp
+//   const x = Buffer.alloc(8);
+//   x.writeBigUInt64BE(BigInt(timestamp)); // 8-byte timestamp (Big Endian)
+//   const iv_source = Buffer.concat([x, x, x, x]);
+//   const iv = createHash("md5").update(iv_source).digest();
+//   console.log(`IV: ${iv}`);
+
+//   // Step 4: Decrypt using AES-128-CFB
+//   const decipher = createDecipheriv("aes-128-cfb", key, iv);
+//   const decrypted = Buffer.concat([decipher.update(buffer.slice(17)), decipher.final()]);
+
+//   console.log(`Decrypted Header: ${decrypted.toString("hex")}`);
+// }
+
+async function remoteSocketToWS(remoteSocket, webSocket, responseHeader, retry, log) {
+  let header = responseHeader;
+  let hasIncomingData = false;
+  await remoteSocket.readable
+    .pipeTo(
+      new WritableStream({
+        start() {},
+        async write(chunk, controller) {
+          hasIncomingData = true;
+          if (webSocket.readyState !== WS_READY_STATE_OPEN) {
+            controller.error("webSocket.readyState is not open, maybe close");
+          }
+          if (header) {
+            webSocket.send(await new Blob([header, chunk]).arrayBuffer());
+            header = null;
+          } else {
+            webSocket.send(chunk);
+          }
+        },
+        close() {
+          log(`remoteConnection!.readable is close with hasIncomingData is ${hasIncomingData}`);
+        },
+        abort(reason) {
+          console.error(`remoteConnection!.readable abort`, reason);
+        },
+      })
+    )
+    .catch((error) => {
+      console.error(`remoteSocketToWS has exception `, error.stack || error);
+      safeCloseWebSocket(webSocket);
+    });
+  if (hasIncomingData === false && retry) {
+    log(`retry`);
+    retry();
+  }
 }
 
-const WS_READY_STATE_OPEN = 1;
-const WS_READY_STATE_CLOSING = 2;
-/**
- * Closes a WebSocket connection safely without throwing exceptions.
- * @param {import("@cloudflare/workers-types").WebSocket} socket The WebSocket connection to close.
- */
 function safeCloseWebSocket(socket) {
-	try {
-		if (socket.readyState === WS_READY_STATE_OPEN || socket.readyState === WS_READY_STATE_CLOSING) {
-			socket.close();
-		}
-	} catch (error) {
-		console.error('safeCloseWebSocket error', error);
-	}
+  try {
+    if (socket.readyState === WS_READY_STATE_OPEN || socket.readyState === WS_READY_STATE_CLOSING) {
+      socket.close();
+    }
+  } catch (error) {
+    console.error("safeCloseWebSocket error", error);
+  }
 }
 
-const byteToHex = [];
-
-for (let i = 0; i < 256; ++i) {
-	byteToHex.push((i + 256).toString(16).slice(1));
+async function checkProxyHealth(proxyIP, proxyPort) {
+  const req = await fetch(`${PROXY_HEALTH_CHECK_API}?ip=${proxyIP}:${proxyPort}`);
+  return await req.json();
 }
 
-function unsafeStringify(arr, offset = 0) {
-	return (byteToHex[arr[offset + 0]] + byteToHex[arr[offset + 1]] + byteToHex[arr[offset + 2]] + byteToHex[arr[offset + 3]] + "-" + byteToHex[arr[offset + 4]] + byteToHex[arr[offset + 5]] + "-" + byteToHex[arr[offset + 6]] + byteToHex[arr[offset + 7]] + "-" + byteToHex[arr[offset + 8]] + byteToHex[arr[offset + 9]] + "-" + byteToHex[arr[offset + 10]] + byteToHex[arr[offset + 11]] + byteToHex[arr[offset + 12]] + byteToHex[arr[offset + 13]] + byteToHex[arr[offset + 14]] + byteToHex[arr[offset + 15]]).toLowerCase();
+// Helpers
+function base64ToArrayBuffer(base64Str) {
+  if (!base64Str) {
+    return { error: null };
+  }
+  try {
+    base64Str = base64Str.replace(/-/g, "+").replace(/_/g, "/");
+    const decode = atob(base64Str);
+    const arryBuffer = Uint8Array.from(decode, (c) => c.charCodeAt(0));
+    return { earlyData: arryBuffer.buffer, error: null };
+  } catch (error) {
+    return { error };
+  }
 }
 
-function stringify(arr, offset = 0) {
-	const uuid = unsafeStringify(arr, offset);
-	if (!isValidUUID(uuid)) {
-		throw TypeError("Stringified UUID is invalid");
-	}
-	return uuid;
+function arrayBufferToHex(buffer) {
+  return [...new Uint8Array(buffer)].map((x) => x.toString(16).padStart(2, "0")).join("");
 }
 
+function shuffleArray(array) {
+  let currentIndex = array.length;
 
+  // While there remain elements to shuffle...
+  while (currentIndex != 0) {
+    // Pick a remaining element...
+    let randomIndex = Math.floor(Math.random() * currentIndex);
+    currentIndex--;
+
+    // And swap it with the current element.
+    [array[currentIndex], array[randomIndex]] = [array[randomIndex], array[currentIndex]];
+  }
+}
+
+async function generateHashFromText(text) {
+  const msgUint8 = new TextEncoder().encode(text); // encode as (utf-8) Uint8Array
+  const hashBuffer = await crypto.subtle.digest("MD5", msgUint8); // hash the message
+  const hashArray = Array.from(new Uint8Array(hashBuffer)); // convert buffer to byte array
+  const hashHex = hashArray.map((b) => b.toString(16).padStart(2, "0")).join(""); // convert bytes to hex string
+
+  return hashHex;
+}
+
+function reverse(s) {
+  return s.split("").reverse().join("");
+}
+
+function getFlagEmoji(isoCode) {
+  const codePoints = isoCode
+    .toUpperCase()
+    .split("")
+    .map((char) => 127397 + char.charCodeAt(0));
+  return String.fromCodePoint(...codePoints);
+}
+
+// CloudflareApi Class
+class CloudflareApi {
+  constructor() {
+    this.bearer = `Bearer ${apiKey}`;
+    this.accountID = accountID;
+    this.zoneID = zoneID;
+    this.apiEmail = apiEmail;
+    this.apiKey = apiKey;
+
+    this.headers = {
+      Authorization: this.bearer,
+      "X-Auth-Email": this.apiEmail,
+      "X-Auth-Key": this.apiKey,
+    };
+  }
+
+  async getDomainList() {
+    const url = `https://api.cloudflare.com/client/v4/accounts/${this.accountID}/workers/domains`;
+    const res = await fetch(url, {
+      headers: {
+        ...this.headers,
+      },
+    });
+
+    if (res.status == 200) {
+      const respJson = await res.json();
+
+      return respJson.result.filter((data) => data.service == serviceName).map((data) => data.hostname);
+    }
+
+    return [];
+  }
+
+  async registerDomain(domain) {
+    domain = domain.toLowerCase();
+    const registeredDomains = await this.getDomainList();
+
+    if (!domain.endsWith(rootDomain)) return 400;
+    if (registeredDomains.includes(domain)) return 409;
+
+    try {
+      const domainTest = await fetch(`https://${domain.replaceAll("." + APP_DOMAIN, "")}`);
+      if (domainTest.status == 530) return domainTest.status;
+
+      const badWordsListRes = await fetch(BAD_WORDS_LIST);
+      if (badWordsListRes.status == 200) {
+        const badWordsList = (await badWordsListRes.text()).split("\n");
+        for (const badWord of badWordsList) {
+          if (domain.includes(badWord.toLowerCase())) {
+            return 403;
+          }
+        }
+      } else {
+        return 403;
+      }
+    } catch (e) {
+      return 400;
+    }
+
+    const url = `https://api.cloudflare.com/client/v4/accounts/${this.accountID}/workers/domains`;
+    const res = await fetch(url, {
+      method: "PUT",
+      body: JSON.stringify({
+        environment: "production",
+        hostname: domain,
+        service: serviceName,
+        zone_id: this.zoneID,
+      }),
+      headers: {
+        ...this.headers,
+      },
+    });
+
+    return res.status;
+  }
+}
+
+// HTML page base
 /**
- * Handles outbound UDP traffic by transforming the data into DNS queries and sending them over a WebSocket connection.
- * @param {import("@cloudflare/workers-types").WebSocket} webSocket The WebSocket connection to send the DNS queries over.
- * @param {ArrayBuffer} วเลสResponseHeader The วเลส response header.
- * @param {(string) => void} log The logging function.
- * @returns {{write: (chunk: Uint8Array) => void}} An object with a write method that accepts a Uint8Array chunk to write to the transform stream.
+ * Cloudflare worker gak support DOM API, tetapi mereka menggunakan HTML Rewriter.
+ * Tapi, karena kelihatannta repot kalo pake HTML Rewriter. Kita pake cara konfensional saja...
  */
-async function handleUDPOutBound(webSocket, วเลสResponseHeader, log) {
-
-	let isวเลสHeaderSent = false;
-	const transformStream = new TransformStream({
-		start(controller) {
-
-		},
-		transform(chunk, controller) {
-			// udp message 2 byte is the the length of udp data
-			// TODO: this should have bug, beacsue maybe udp chunk can be in two websocket message
-			for (let index = 0; index < chunk.byteLength;) {
-				const lengthBuffer = chunk.slice(index, index + 2);
-				const udpPakcetLength = new DataView(lengthBuffer).getUint16(0);
-				const udpData = new Uint8Array(
-					chunk.slice(index + 2, index + 2 + udpPakcetLength)
-				);
-				index = index + 2 + udpPakcetLength;
-				controller.enqueue(udpData);
-			}
-		},
-		flush(controller) {
-		}
-	});
-
-	// only handle dns udp for now
-	transformStream.readable.pipeTo(new WritableStream({
-		async write(chunk) {
-			const resp = await fetch(dohURL, // dns server url
-				{
-					method: 'POST',
-					headers: {
-						'content-type': 'application/dns-message',
-					},
-					body: chunk,
-				})
-			const dnsQueryResult = await resp.arrayBuffer();
-			const udpSize = dnsQueryResult.byteLength;
-			// console.log([...new Uint8Array(dnsQueryResult)].map((x) => x.toString(16)));
-			const udpSizeBuffer = new Uint8Array([(udpSize >> 8) & 0xff, udpSize & 0xff]);
-			if (webSocket.readyState === WS_READY_STATE_OPEN) {
-				log(`doh success and dns message length is ${udpSize}`);
-				if (isวเลสHeaderSent) {
-					webSocket.send(await new Blob([udpSizeBuffer, dnsQueryResult]).arrayBuffer());
-				} else {
-					webSocket.send(await new Blob([วเลสResponseHeader, udpSizeBuffer, dnsQueryResult]).arrayBuffer());
-					isวเลสHeaderSent = true;
-				}
-			}
-		}
-	})).catch((error) => {
-		log('dns udp has error' + error)
-	});
-
-	const writer = transformStream.writable.getWriter();
-
-	return {
-		/**
-		 * 
-		 * @param {Uint8Array} chunk 
-		 */
-		write(chunk) {
-			writer.write(chunk);
-		}
-	};
-}
-
-const at = 'QA==';
-const pt = 'dmxlc3M=';
-const ed = 'RUR0dW5uZWw=';
-/**
- *
- * @param {string} userID - single or comma separated userIDs
- * @param {string | null} hostName
- * @returns {string}
- */
-function getวเลสConfig(userIDs, hostName) {
-	const commonUrlPart = `:443?encryption=none&security=tls&sni=${hostName}&fp=randomized&type=ws&host=${hostName}&path=%2F%3Fed%3D2048#${hostName}`;
-	const hashSeparator = "################################################################";
-
-	// Split the userIDs into an array
-	const userIDArray = userIDs.split(",");
-
-	// Prepare output string for each userID
-	const output = userIDArray.map((userID) => {
-		const วเลสMain = atob(pt) + '://' + userID + atob(at) + hostName + commonUrlPart;
-		const วเลสSec = atob(pt) + '://' + userID + atob(at) + พร็อกซีไอพี + commonUrlPart;
-		return `<h2>UUID: ${userID}</h2>${hashSeparator}\nv2ray default ip
----------------------------------------------------------------
-${วเลสMain}
-<button onclick='copyToClipboard("${วเลสMain}")'><i class="fa fa-clipboard"></i> Copy วเลสMain</button>
----------------------------------------------------------------
-v2ray with bestip
----------------------------------------------------------------
-${วเลสSec}
-<button onclick='copyToClipboard("${วเลสSec}")'><i class="fa fa-clipboard"></i> Copy วเลสSec</button>
----------------------------------------------------------------`;
-	}).join('\n');
-	const sublink = `https://${hostName}/sub/${userIDArray[0]}?format=clash`
-	const subbestip = `https://${hostName}/bestip/${userIDArray[0]}`;
-	const clash_link = `https://api.v1.mk/sub?target=clash&url=${encodeURIComponent(sublink)}&insert=false&emoji=true&list=false&tfo=false&scv=true&fdn=false&sort=false&new_name=true`;
-	// Prepare header string
-	const header = `
-<p align='center'><img src='https://cloudflare-ipfs.com/ipfs/bafybeigd6i5aavwpr6wvnwuyayklq3omonggta4x2q7kpmgafj357nkcky' alt='图片描述' style='margin-bottom: -50px;'>
-<b style='font-size: 15px;'>Welcome! This function generates configuration for วเลส protocol. If you found this useful, please check our GitHub project for more:</b>
-<b style='font-size: 15px;'>欢迎！这是生成 วเลส 协议的配置。如果您发现这个项目很好用，请查看我们的 GitHub 项目给我一个star：</b>
-<a href='https://github.com/3Kmfi6HP/EDtunnel' target='_blank'>EDtunnel - https://github.com/3Kmfi6HP/EDtunnel</a>
-<iframe src='https://ghbtns.com/github-btn.html?user=USERNAME&repo=REPOSITORY&type=star&count=true&size=large' frameborder='0' scrolling='0' width='170' height='30' title='GitHub'></iframe>
-<a href='//${hostName}/sub/${userIDArray[0]}' target='_blank'>วเลส 节点订阅连接</a>
-<a href='clash://install-config?url=${encodeURIComponent(`https://${hostName}/sub/${userIDArray[0]}?format=clash`)}}' target='_blank'>Clash for Windows 节点订阅连接</a>
-<a href='${clash_link}' target='_blank'>Clash 节点订阅连接</a>
-<a href='${subbestip}' target='_blank'>优选IP自动节点订阅</a>
-<a href='clash://install-config?url=${encodeURIComponent(subbestip)}' target='_blank'>Clash优选IP自动</a>
-<a href='sing-box://import-remote-profile?url=${encodeURIComponent(subbestip)}' target='_blank'>singbox优选IP自动</a>
-<a href='sn://subscription?url=${encodeURIComponent(subbestip)}' target='_blank'>nekobox优选IP自动</a>
-<a href='v2rayng://install-config?url=${encodeURIComponent(subbestip)}' target='_blank'>v2rayNG优选IP自动</a></p>`;
-
-	// HTML Head with CSS and FontAwesome library
-	const htmlHead = `
+let baseHTML = `
+<!DOCTYPE html>
+<html lang="en" id="html" class="scroll-auto scrollbar-hide dark">
   <head>
-	<title>EDtunnel: วเลส configuration</title>
-	<meta name='description' content='This is a tool for generating วเลส protocol configurations. Give us a star on GitHub https://github.com/3Kmfi6HP/EDtunnel if you found it useful!'>
-	<meta name='keywords' content='EDtunnel, cloudflare pages, cloudflare worker, severless'>
-	<meta name='viewport' content='width=device-width, initial-scale=1'>
-	<meta property='og:site_name' content='EDtunnel: วเลส configuration' />
-	<meta property='og:type' content='website' />
-	<meta property='og:title' content='EDtunnel - วเลส configuration and subscribe output' />
-	<meta property='og:description' content='Use cloudflare pages and worker severless to implement วเลส protocol' />
-	<meta property='og:url' content='https://${hostName}/' />
-	<meta property='og:image' content='https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(`วเลส://${userIDs.split(",")[0]}@${hostName}${commonUrlPart}`)}' />
-	<meta name='twitter:card' content='summary_large_image' />
-	<meta name='twitter:title' content='EDtunnel - วเลส configuration and subscribe output' />
-	<meta name='twitter:description' content='Use cloudflare pages and worker severless to implement วเลส protocol' />
-	<meta name='twitter:url' content='https://${hostName}/' />
-	<meta name='twitter:image' content='https://cloudflare-ipfs.com/ipfs/bafybeigd6i5aavwpr6wvnwuyayklq3omonggta4x2q7kpmgafj357nkcky' />
-	<meta property='og:image:width' content='1500' />
-	<meta property='og:image:height' content='1500' />
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Proxy List</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      /* For Webkit-based browsers (Chrome, Safari and Opera) */
+      .scrollbar-hide::-webkit-scrollbar {
+          display: none;
+      }
 
-	<style>
-	body {
-	  font-family: Arial, sans-serif;
-	  background-color: #f0f0f0;
-	  color: #333;
-	  padding: 10px;
-	}
-
-	a {
-	  color: #1a0dab;
-	  text-decoration: none;
-	}
-	img {
-	  max-width: 100%;
-	  height: auto;
-	}
-
-	pre {
-	  white-space: pre-wrap;
-	  word-wrap: break-word;
-	  background-color: #fff;
-	  border: 1px solid #ddd;
-	  padding: 15px;
-	  margin: 10px 0;
-	}
-	/* Dark mode */
-	@media (prefers-color-scheme: dark) {
-	  body {
-		background-color: #333;
-		color: #f0f0f0;
-	  }
-
-	  a {
-		color: #9db4ff;
-	  }
-
-	  pre {
-		background-color: #282a36;
-		border-color: #6272a4;
-	  }
-	}
-	</style>
-
-	<!-- Add FontAwesome library -->
-	<link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css'>
+      /* For IE, Edge and Firefox */
+      .scrollbar-hide {
+          -ms-overflow-style: none;  /* IE and Edge */
+          scrollbar-width: none;  /* Firefox */
+      }
+    </style>
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/lozad/dist/lozad.min.js"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'selector',
+      }
+    </script>
   </head>
-  `;
+  <body class="bg-white dark:bg-neutral-800 bg-fixed">
+    <!-- Notification -->
+    <div
+      id="notification-badge"
+      class="fixed z-50 opacity-0 transition-opacity ease-in-out duration-300 mt-9 mr-6 right-0 p-3 max-w-sm bg-white rounded-xl border border-2 border-neutral-800 flex items-center gap-x-4"
+    >
+      <div class="shrink-0">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#171717" class="size-6">
+          <path
+            d="M5.85 3.5a.75.75 0 0 0-1.117-1 9.719 9.719 0 0 0-2.348 4.876.75.75 0 0 0 1.479.248A8.219 8.219 0 0 1 5.85 3.5ZM19.267 2.5a.75.75 0 1 0-1.118 1 8.22 8.22 0 0 1 1.987 4.124.75.75 0 0 0 1.48-.248A9.72 9.72 0 0 0 19.266 2.5Z"
+          />
+          <path
+            fill-rule="evenodd"
+            d="M12 2.25A6.75 6.75 0 0 0 5.25 9v.75a8.217 8.217 0 0 1-2.119 5.52.75.75 0 0 0 .298 1.206c1.544.57 3.16.99 4.831 1.243a3.75 3.75 0 1 0 7.48 0 24.583 24.583 0 0 0 4.83-1.244.75.75 0 0 0 .298-1.205 8.217 8.217 0 0 1-2.118-5.52V9A6.75 6.75 0 0 0 12 2.25ZM9.75 18c0-.034 0-.067.002-.1a25.05 25.05 0 0 0 4.496 0l.002.1a2.25 2.25 0 1 1-4.5 0Z"
+            clip-rule="evenodd"
+          />
+        </svg>
+      </div>
+      <div>
+        <div class="text-md font-bold text-blue-500">Berhasil!</div>
+        <p class="text-sm text-neutral-800">Akun berhasil disalin</p>
+      </div>
+    </div>
+    <!-- Select Country -->
+    <div>
+      <div
+        class="h-full fixed top-0 w-14 bg-white dark:bg-neutral-800 border-r-2 border-neutral-800 dark:border-white z-20 overflow-y-scroll scrollbar-hide"
+      >
+        <div class="text-2xl flex flex-col items-center h-full gap-2">
+          PLACEHOLDER_BENDERA_NEGARA
+        </div>
+      </div>
+    </div>
+    <!-- Main -->
+    <div id="container-header">
+      <div id="container-info" class="bg-amber-400 border-2 border-neutral-800 text-right px-5">
+        <div class="flex justify-end gap-3 text-sm">
+          <p id="container-info-ip">IP: 127.0.0.1</p>
+          <p id="container-info-country">Country: Indonesia</p>
+          <p id="container-info-isp">ISP: Localhost</p>
+        </div>
+      </div>
+    </div>
+    <div class="container">
+      <div
+        id="container-title"
+        class="sticky bg-white dark:bg-neutral-800 border-b-2 border-neutral-800 dark:border-white z-10 py-6 w-screen"
+      >
+        <h1 class="text-xl text-center text-neutral-800 dark:text-white">
+          PLACEHOLDER_JUDUL
+        </h1>
+      </div>
+      <div class="flex gap-6 pt-10 w-screen justify-center">
+        PLACEHOLDER_PROXY_GROUP
+      </div>
 
-	// Join output with newlines, wrap inside <html> and <body>
-	return `
-  <html>
-  ${htmlHead}
-  <body>
-  <pre style='background-color: transparent; border: none;'>${header}</pre>
-  <pre>${output}</pre>
-  </body>
-  <script>
-	function copyToClipboard(text) {
-	  navigator.clipboard.writeText(text)
-		.then(() => {
-		  alert("Copied to clipboard");
-		})
-		.catch((err) => {
-		  console.error("Failed to copy to clipboard:", err);
-		});
-	}
-  </script>
-  </html>`;
+      <!-- Pagination -->
+      <nav id="container-pagination" class="w-screen mt-8 sticky bottom-0 right-0 left-0 transition -translate-y-6 z-20">
+        <ul class="flex justify-center space-x-4">
+          PLACEHOLDER_PAGE_BUTTON
+        </ul>
+      </nav>
+    </div>
+
+    <div id="container-window" class="hidden">
+      <!-- Windows -->
+      <!-- Informations -->
+      <div class="fixed z-20 top-0 w-full h-full bg-white dark:bg-neutral-800">
+        <p id="container-window-info" class="text-center w-full h-full top-1/4 absolute dark:text-white"></p>
+      </div>
+      <!-- Output Format -->
+      <div id="output-window" class="fixed z-20 top-0 right-0 w-full h-full flex justify-center items-center hidden">
+        <div class="w-[75%] h-[30%] flex flex-col gap-1 p-1 text-center rounded-md">
+          <div class="basis-1/6 w-full h-full rounded-md">
+            <div class="flex w-full h-full gap-1 justify-between">
+              <button
+                onclick="copyToClipboardAsTarget('clash')"
+                class="basis-1/2 p-2 rounded-full bg-amber-400 flex justify-center items-center"
+              >
+                Clash
+              </button>
+              <button
+                onclick="copyToClipboardAsTarget('sfa')"
+                class="basis-1/2 p-2 rounded-full bg-amber-400 flex justify-center items-center"
+              >
+                SFA
+              </button>
+              <button
+                onclick="copyToClipboardAsTarget('bfr')"
+                class="basis-1/2 p-2 rounded-full bg-amber-400 flex justify-center items-center"
+              >
+                BFR
+              </button>
+            </div>
+          </div>
+          <div class="basis-1/6 w-full h-full rounded-md">
+            <div class="flex w-full h-full gap-1 justify-between">
+              <button
+                onclick="copyToClipboardAsTarget('v2ray')"
+                class="basis-1/2 p-2 rounded-full bg-amber-400 flex justify-center items-center"
+              >
+                V2Ray/Xray
+              </button>
+              <button
+                onclick="copyToClipboardAsRaw()"
+                class="basis-1/2 p-2 rounded-full bg-amber-400 flex justify-center items-center"
+              >
+                Raw
+              </button>
+            </div>
+          </div>
+          <div class="basis-1/6 w-full h-full rounded-md">
+            <div class="flex w-full h-full gap-1 justify-center">
+              <button
+                onclick="toggleOutputWindow()"
+                class="basis-1/2 border-2 border-indigo-400 hover:bg-indigo-400 dark:text-white p-2 rounded-full flex justify-center items-center"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- Wildcards -->
+      <div id="wildcards-window" class="fixed hidden z-20 top-0 right-0 w-full h-full flex justify-center items-center">
+        <div class="w-[75%] h-[30%] flex flex-col gap-1 p-1 text-center rounded-md">
+          <div class="basis-1/6 w-full h-full rounded-md">
+            <div class="flex w-full h-full gap-1 justify-between">
+              <input
+                id="new-domain-input"
+                type="text"
+                placeholder="Input wildcard"
+                class="basis-11/12 w-full h-full px-6 rounded-md focus:outline-0"
+              />
+              <button
+                onclick="registerDomain()"
+                class="p-2 rounded-full bg-amber-400 flex justify-center items-center"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="size-6">
+                  <path
+                    fill-rule="evenodd"
+                    d="M16.72 7.72a.75.75 0 0 1 1.06 0l3.75 3.75a.75.75 0 0 1 0 1.06l-3.75 3.75a.75.75 0 1 1-1.06-1.06l2.47-2.47H3a.75.75 0 0 1 0-1.5h16.19l-2.47-2.47a.75.75 0 0 1 0-1.06Z"
+                    clip-rule="evenodd"
+                  ></path>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="basis-5/6 w-full h-full rounded-md">
+            <div
+              id="container-domains"
+              class="w-full h-full rounded-md flex flex-col gap-1 overflow-scroll scrollbar-hide"
+            ></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      <div class="fixed bottom-3 right-3 flex flex-col gap-1 z-50">
+        <a href="${DONATE_LINK}" target="_blank">
+          <button class="bg-green-500 rounded-full border-2 border-neutral-800 p-1 block">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="size-6">
+              <path
+                d="M10.464 8.746c.227-.18.497-.311.786-.394v2.795a2.252 2.252 0 0 1-.786-.393c-.394-.313-.546-.681-.546-1.004 0-.323.152-.691.546-1.004ZM12.75 15.662v-2.824c.347.085.664.228.921.421.427.32.579.686.579.991 0 .305-.152.671-.579.991a2.534 2.534 0 0 1-.921.42Z"
+              />
+              <path
+                fill-rule="evenodd"
+                d="M12 2.25c-5.385 0-9.75 4.365-9.75 9.75s4.365 9.75 9.75 9.75 9.75-4.365 9.75-9.75S17.385 2.25 12 2.25ZM12.75 6a.75.75 0 0 0-1.5 0v.816a3.836 3.836 0 0 0-1.72.756c-.712.566-1.112 1.35-1.112 2.178 0 .829.4 1.612 1.113 2.178.502.4 1.102.647 1.719.756v2.978a2.536 2.536 0 0 1-.921-.421l-.879-.66a.75.75 0 0 0-.9 1.2l.879.66c.533.4 1.169.645 1.821.75V18a.75.75 0 0 0 1.5 0v-.81a4.124 4.124 0 0 0 1.821-.749c.745-.559 1.179-1.344 1.179-2.191 0-.847-.434-1.632-1.179-2.191a4.122 4.122 0 0 0-1.821-.75V8.354c.29.082.559.213.786.393l.415.33a.75.75 0 0 0 .933-1.175l-.415-.33a3.836 3.836 0 0 0-1.719-.755V6Z"
+                clip-rule="evenodd"
+              />
+            </svg>
+          </button>
+        </a>
+        <button onclick="toggleWildcardsWindow()" class="bg-indigo-400 rounded-full border-2 border-neutral-800 p-1 PLACEHOLDER_API_READY">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke-width="1.5"
+            stroke="currentColor"
+            class="size-6"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M9 9V4.5M9 9H4.5M9 9 3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5 5.25 5.25"
+            />
+          </svg>
+        </button>
+        <button onclick="toggleDarkMode()" class="bg-amber-400 rounded-full border-2 border-neutral-800 p-1">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke-width="1.5"
+            stroke="currentColor"
+            class="size-6"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z"
+            ></path>
+          </svg>
+        </button>
+      </div>
+    </footer>
+
+    <script>
+      // Shared
+      const rootDomain = "${serviceName}.${rootDomain}";
+      const notification = document.getElementById("notification-badge");
+      const windowContainer = document.getElementById("container-window");
+      const windowInfoContainer = document.getElementById("container-window-info");
+      const converterUrl =
+        "https://script.google.com/macros/s/AKfycbwwVeHNUlnP92syOP82p1dOk_-xwBgRIxkTjLhxxZ5UXicrGOEVNc5JaSOu0Bgsx_gG/exec";
+
+
+      // Switches
+      let isDomainListFetched = false;
+
+      // Local variable
+      let rawConfig = "";
+
+      function getDomainList() {
+        if (isDomainListFetched) return;
+        isDomainListFetched = true;
+
+        windowInfoContainer.innerText = "Fetching data...";
+
+        const url = "https://" + rootDomain + "/api/v1/domains/get";
+        const res = fetch(url).then(async (res) => {
+          const domainListContainer = document.getElementById("container-domains");
+          domainListContainer.innerHTML = "";
+
+          if (res.status == 200) {
+            windowInfoContainer.innerText = "Done!";
+            const respJson = await res.json();
+            for (const domain of respJson) {
+              const domainElement = document.createElement("p");
+              domainElement.classList.add("w-full", "bg-amber-400", "rounded-md");
+              domainElement.innerText = domain;
+              domainListContainer.appendChild(domainElement);
+            }
+          } else {
+            windowInfoContainer.innerText = "Failed!";
+          }
+        });
+      }
+
+      function registerDomain() {
+        const domainInputElement = document.getElementById("new-domain-input");
+        const rawDomain = domainInputElement.value.toLowerCase();
+        const domain = domainInputElement.value + "." + rootDomain;
+
+        if (!rawDomain.match(/\\w+\\.\\w+$/) || rawDomain.endsWith(rootDomain)) {
+          windowInfoContainer.innerText = "Invalid URL!";
+          return;
+        }
+
+        windowInfoContainer.innerText = "Pushing request...";
+
+        const url = "https://" + rootDomain + "/api/v1/domains/put?domain=" + domain;
+        const res = fetch(url).then((res) => {
+          if (res.status == 200) {
+            windowInfoContainer.innerText = "Done!";
+            domainInputElement.value = "";
+            isDomainListFetched = false;
+            getDomainList();
+          } else {
+            if (res.status == 409) {
+              windowInfoContainer.innerText = "Domain exists!";
+            } else {
+              windowInfoContainer.innerText = "Error " + res.status;
+            }
+          }
+        });
+      }
+
+      function copyToClipboard(text) {
+        toggleOutputWindow();
+        rawConfig = text;
+      }
+
+      function copyToClipboardAsRaw() {
+        navigator.clipboard.writeText(rawConfig);
+
+        notification.classList.remove("opacity-0");
+        setTimeout(() => {
+          notification.classList.add("opacity-0");
+        }, 2000);
+      }
+
+      async function copyToClipboardAsTarget(target) {
+        windowInfoContainer.innerText = "Generating config...";
+        const url = "${CONVERTER_URL}";
+        const res = await fetch(url, {
+          method: "POST",
+          body: JSON.stringify({
+            url: rawConfig,
+            format: target,
+            template: "cf",
+          }),
+        });
+
+        if (res.status == 200) {
+          windowInfoContainer.innerText = "Done!";
+          navigator.clipboard.writeText(await res.text());
+
+          notification.classList.remove("opacity-0");
+          setTimeout(() => {
+            notification.classList.add("opacity-0");
+          }, 2000);
+        } else {
+          windowInfoContainer.innerText = "Error " + res.statusText;
+        }
+      }
+
+      function navigateTo(link) {
+        window.location.href = link + window.location.search;
+      }
+
+      function toggleOutputWindow() {
+        windowInfoContainer.innerText = "Select output:";
+        toggleWindow();
+        const rootElement = document.getElementById("output-window");
+        if (rootElement.classList.contains("hidden")) {
+          rootElement.classList.remove("hidden");
+        } else {
+          rootElement.classList.add("hidden");
+        }
+      }
+
+      function toggleWildcardsWindow() {
+        windowInfoContainer.innerText = "Domain list";
+        toggleWindow();
+        getDomainList();
+        const rootElement = document.getElementById("wildcards-window");
+        if (rootElement.classList.contains("hidden")) {
+          rootElement.classList.remove("hidden");
+        } else {
+          rootElement.classList.add("hidden");
+        }
+      }
+
+      function toggleWindow() {
+        if (windowContainer.classList.contains("hidden")) {
+          windowContainer.classList.remove("hidden");
+        } else {
+          windowContainer.classList.add("hidden");
+        }
+      }
+
+      function toggleDarkMode() {
+        const rootElement = document.getElementById("html");
+        if (rootElement.classList.contains("dark")) {
+          rootElement.classList.remove("dark");
+        } else {
+          rootElement.classList.add("dark");
+        }
+      }
+
+      function checkProxy() {
+        for (let i = 0; ; i++) {
+          const pingElement = document.getElementById("ping-"+i);
+          if (pingElement == undefined) return;
+
+          const target = pingElement.textContent.split(" ").filter((ipPort) => ipPort.match(":"))[0];
+          if (target) {
+            pingElement.textContent = "Checking...";
+          } else {
+            continue;
+          }
+
+          let isActive = false;
+          new Promise(async (resolve) => {
+            const res = await fetch("https://${serviceName}.${rootDomain}/check?target=" + target)
+              .then(async (res) => {
+                if (isActive) return;
+                if (res.status == 200) {
+                  pingElement.classList.remove("dark:text-white");
+                  const jsonResp = await res.json();
+                  if (jsonResp.proxyip === true) {
+                    isActive = true;
+                    pingElement.textContent = "Active " + jsonResp.delay + " ms " + "(" + jsonResp.colo + ")";
+                    pingElement.classList.add("text-green-600");
+                  } else {
+                    pingElement.textContent = "Inactive";
+                    pingElement.classList.add("text-red-600");
+                  }
+                } else {
+                  pingElement.textContent = "Check Failed!";
+                }
+              })
+              .finally(() => {
+                resolve(0);
+              });
+          });
+        }
+      }
+
+      function checkRegion() {
+        for (let i = 0; ; i++) {
+          console.log("Halo " + i)
+          const containerRegionCheck = document.getElementById("container-region-check-" + i);
+          const configSample = document.getElementById("config-sample-" + i).value.replaceAll(" ", "");
+          if (containerRegionCheck == undefined) break;
+
+          const res = fetch(
+            "https://api.foolvpn.me/regioncheck?config=" + encodeURIComponent(configSample)
+          ).then(async (res) => {
+            if (res.status == 200) {
+              containerRegionCheck.innerHTML = "<hr>";
+              for (const result of await res.json()) {
+                containerRegionCheck.innerHTML += "<p>" + result.name + ": " + result.region + "</p>";
+              }
+            }
+          });
+        }
+      }
+
+      function checkGeoip() {
+        const containerIP = document.getElementById("container-info-ip");
+        const containerCountry = document.getElementById("container-info-country");
+        const containerISP = document.getElementById("container-info-isp");
+        const res = fetch("https://" + rootDomain + "/api/v1/myip").then(async (res) => {
+          if (res.status == 200) {
+            const respJson = await res.json();
+            containerIP.innerText = "IP: " + respJson.ip;
+            containerCountry.innerText = "Country: " + respJson.country;
+            containerISP.innerText = "ISP: " + respJson.asOrganization;
+          }
+        });
+      }
+
+      window.onload = () => {
+        checkGeoip();
+        checkProxy();
+        // checkRegion();
+
+        const observer = lozad(".lozad", {
+          load: function (el) {
+            el.classList.remove("scale-95");
+          },
+        });
+        observer.observe();
+      };
+
+      window.onscroll = () => {
+        const paginationContainer = document.getElementById("container-pagination");
+
+        if (window.innerHeight + Math.round(window.scrollY) >= document.body.offsetHeight) {
+          paginationContainer.classList.remove("-translate-y-6");
+        } else {
+          paginationContainer.classList.add("-translate-y-6");
+        }
+      };
+    </script>
+    </body>
+
+</html>
+`;
+
+class Document {
+  proxies = [];
+
+  constructor(request) {
+    this.html = baseHTML;
+    this.request = request;
+    this.url = new URL(this.request.url);
+  }
+
+  setTitle(title) {
+    this.html = this.html.replaceAll("PLACEHOLDER_JUDUL", title);
+  }
+
+  addInfo(text) {
+    text = `<span>${text}</span>`;
+    this.html = this.html.replaceAll("PLACEHOLDER_INFO", `${text}\nPLACEHOLDER_INFO`);
+  }
+
+  registerProxies(data, proxies) {
+    this.proxies.push({
+      ...data,
+      list: proxies,
+    });
+  }
+
+  buildProxyGroup() {
+    let proxyGroupElement = "";
+    proxyGroupElement += `<div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">`;
+    for (let i = 0; i < this.proxies.length; i++) {
+      const proxyData = this.proxies[i];
+
+      // Assign proxies
+      proxyGroupElement += `<div class="lozad scale-95 mb-2 bg-white dark:bg-neutral-800 transition-transform duration-200 rounded-lg p-4 w-60 border-2 border-neutral-800">`;
+      proxyGroupElement += `  <div id="countryFlag" class="absolute -translate-y-9 -translate-x-2 border-2 border-neutral-800 rounded-full overflow-hidden"><img width="32" src="https://hatscripts.github.io/circle-flags/flags/${proxyData.country.toLowerCase()}.svg" /></div>`;
+      proxyGroupElement += `  <div>`;
+      proxyGroupElement += `    <div id="ping-${i}" class="animate-pulse text-xs font-semibold dark:text-white">Idle ${proxyData.proxyIP}:${proxyData.proxyPort}</div>`;
+      proxyGroupElement += `  </div>`;
+      proxyGroupElement += `  <div class="rounded py-1 px-2 bg-amber-400 dark:bg-neutral-800 dark:border-2 dark:border-amber-400">`;
+      proxyGroupElement += `    <h5 class="font-bold text-md text-neutral-900 dark:text-white mb-1 overflow-x-scroll scrollbar-hide text-nowrap">${proxyData.org}</h5>`;
+      proxyGroupElement += `    <div class="text-neutral-900 dark:text-white text-sm">`;
+      proxyGroupElement += `      <p>IP: ${proxyData.proxyIP}</p>`;
+      proxyGroupElement += `      <p>Port: ${proxyData.proxyPort}</p>`;
+      proxyGroupElement += `      <div id="container-region-check-${i}">`;
+      proxyGroupElement += `        <input id="config-sample-${i}" class="hidden" type="text" value="${proxyData.list[0]}">`;
+      proxyGroupElement += `      </div>`;
+      proxyGroupElement += `    </div>`;
+      proxyGroupElement += `  </div>`;
+      proxyGroupElement += `  <div class="flex flex-col gap-2 mt-3 text-sm">`;
+      for (let x = 0; x < proxyData.list.length; x++) {
+        const indexName = [
+          `${reverse("NAJORT")} TLS`,
+          `${reverse("SSELV")} TLS`,
+          `${reverse("SS")} TLS`,
+          `${reverse("NAJORT")} NTLS`,
+          `${reverse("SSELV")} NTLS`,
+          `${reverse("SS")} NTLS`,
+        ];
+        const proxy = proxyData.list[x];
+
+        if (x % 2 == 0) {
+          proxyGroupElement += `<div class="flex gap-2 justify-around w-full">`;
+        }
+
+        proxyGroupElement += `<button class="bg-blue-500 dark:bg-neutral-800 dark:border-2 dark:border-blue-500 rounded p-1 w-full text-white" onclick="copyToClipboard('${proxy}')">${indexName[x]}</button>`;
+
+        if (x % 2 == 1) {
+          proxyGroupElement += `</div>`;
+        }
+      }
+      proxyGroupElement += `  </div>`;
+      proxyGroupElement += `</div>`;
+    }
+    proxyGroupElement += `</div>`;
+
+    this.html = this.html.replaceAll("PLACEHOLDER_PROXY_GROUP", `${proxyGroupElement}`);
+  }
+
+  buildCountryFlag() {
+    const proxyBankUrl = this.url.searchParams.get("proxy-list");
+    const flagList = [];
+    for (const proxy of cachedProxyList) {
+      flagList.push(proxy.country);
+    }
+
+    let flagElement = "";
+    for (const flag of new Set(flagList)) {
+      flagElement += `<a href="/sub?cc=${flag}${
+        proxyBankUrl ? "&proxy-list=" + proxyBankUrl : ""
+      }" class="py-1" ><img width=20 src="https://hatscripts.github.io/circle-flags/flags/${flag.toLowerCase()}.svg" /></a>`;
+    }
+
+    this.html = this.html.replaceAll("PLACEHOLDER_BENDERA_NEGARA", flagElement);
+  }
+
+  addPageButton(text, link, isDisabled) {
+    const pageButton = `<li><button ${
+      isDisabled ? "disabled" : ""
+    } class="px-3 py-1 bg-amber-400 border-2 border-neutral-800 rounded" onclick=navigateTo('${link}')>${text}</button></li>`;
+
+    this.html = this.html.replaceAll("PLACEHOLDER_PAGE_BUTTON", `${pageButton}\nPLACEHOLDER_PAGE_BUTTON`);
+  }
+
+  build() {
+    this.buildProxyGroup();
+    this.buildCountryFlag();
+
+    this.html = this.html.replaceAll("PLACEHOLDER_API_READY", isApiReady ? "block" : "hidden");
+
+    return this.html.replaceAll(/PLACEHOLDER_\w+/gim, "");
+  }
 }
-
-const เซ็ตพอร์ตHttp = new Set([80, 8080, 8880, 2052, 2086, 2095, 2082]);
-const เซ็ตพอร์ตHttps = new Set([443, 8443, 2053, 2096, 2087, 2083]);
-
-function สร้างวเลสSub(ไอดีผู้ใช้_เส้นทาง, ชื่อโฮสต์) {
-	const อาร์เรย์ไอดีผู้ใช้ = ไอดีผู้ใช้_เส้นทาง.includes(',') ? ไอดีผู้ใช้_เส้นทาง.split(',') : [ไอดีผู้ใช้_เส้นทาง];
-	const ส่วนUrlทั่วไปHttp = `?encryption=none&security=none&fp=random&type=ws&host=${ชื่อโฮสต์}&path=%2F%3Fed%3D2048#`;
-	const ส่วนUrlทั่วไปHttps = `?encryption=none&security=tls&sni=${ชื่อโฮสต์}&fp=random&type=ws&host=${ชื่อโฮสต์}&path=%2F%3Fed%3D2048#`;
-
-	const ผลลัพธ์ = อาร์เรย์ไอดีผู้ใช้.flatMap((ไอดีผู้ใช้) => {
-		const การกำหนดค่าHttp = Array.from(เซ็ตพอร์ตHttp).flatMap((พอร์ต) => {
-			if (!ชื่อโฮสต์.includes('pages.dev')) {
-				const ส่วนUrl = `${ชื่อโฮสต์}-HTTP-${พอร์ต}`;
-				const วเลสหลักHttp = atob(pt) + '://' + ไอดีผู้ใช้ + atob(at) + ชื่อโฮสต์ + ':' + พอร์ต + ส่วนUrlทั่วไปHttp + ส่วนUrl;
-				return พร็อกซีไอพีs.flatMap((พร็อกซีไอพี) => {
-					const วเลสรองHttp = atob(pt) + '://' + ไอดีผู้ใช้ + atob(at) + พร็อกซีไอพี + ':' + พอร์ต + ส่วนUrlทั่วไปHttp + ส่วนUrl + '-' + พร็อกซีไอพี + '-' + atob(ed);
-					return [วเลสหลักHttp, วเลสรองHttp];
-				});
-			}
-			return [];
-		});
-
-		const การกำหนดค่าHttps = Array.from(เซ็ตพอร์ตHttps).flatMap((พอร์ต) => {
-			const ส่วนUrl = `${ชื่อโฮสต์}-HTTPS-${พอร์ต}`;
-			const วเลสหลักHttps = atob(pt) + '://' + ไอดีผู้ใช้ + atob(at) + ชื่อโฮสต์ + ':' + พอร์ต + ส่วนUrlทั่วไปHttps + ส่วนUrl;
-			return พร็อกซีไอพีs.flatMap((พร็อกซีไอพี) => {
-				const วเลสรองHttps = atob(pt) + '://' + ไอดีผู้ใช้ + atob(at) + พร็อกซีไอพี + ':' + พอร์ต + ส่วนUrlทั่วไปHttps + ส่วนUrl + '-' + พร็อกซีไอพี + '-' + atob(ed);
-				return [วเลสหลักHttps, วเลสรองHttps];
-			});
-		});
-
-		return [...การกำหนดค่าHttp, ...การกำหนดค่าHttps];
-	});
-
-	return ผลลัพธ์.join('\n');
-}
-
-const cn_hostnames = [
-	'weibo.com',                // Weibo - A popular social media platform
-	'www.baidu.com',            // Baidu - The largest search engine in China
-	'www.qq.com',               // QQ - A widely used instant messaging platform
-	'www.taobao.com',           // Taobao - An e-commerce website owned by Alibaba Group
-	'www.jd.com',               // JD.com - One of the largest online retailers in China
-	'www.sina.com.cn',          // Sina - A Chinese online media company
-	'www.sohu.com',             // Sohu - A Chinese internet service provider
-	'www.tmall.com',            // Tmall - An online retail platform owned by Alibaba Group
-	'www.163.com',              // NetEase Mail - One of the major email providers in China
-	'www.zhihu.com',            // Zhihu - A popular question-and-answer website
-	'www.youku.com',            // Youku - A Chinese video sharing platform
-	'www.xinhuanet.com',        // Xinhua News Agency - Official news agency of China
-	'www.douban.com',           // Douban - A Chinese social networking service
-	'www.meituan.com',          // Meituan - A Chinese group buying website for local services
-	'www.toutiao.com',          // Toutiao - A news and information content platform
-	'www.ifeng.com',            // iFeng - A popular news website in China
-	'www.autohome.com.cn',      // Autohome - A leading Chinese automobile online platform
-	'www.360.cn',               // 360 - A Chinese internet security company
-	'www.douyin.com',           // Douyin - A Chinese short video platform
-	'www.kuaidi100.com',        // Kuaidi100 - A Chinese express delivery tracking service
-	'www.wechat.com',           // WeChat - A popular messaging and social media app
-	'www.csdn.net',             // CSDN - A Chinese technology community website
-	'www.imgo.tv',              // ImgoTV - A Chinese live streaming platform
-	'www.aliyun.com',           // Alibaba Cloud - A Chinese cloud computing company
-	'www.eyny.com',             // Eyny - A Chinese multimedia resource-sharing website
-	'www.mgtv.com',             // MGTV - A Chinese online video platform
-	'www.xunlei.com',           // Xunlei - A Chinese download manager and torrent client
-	'www.hao123.com',           // Hao123 - A Chinese web directory service
-	'www.bilibili.com',         // Bilibili - A Chinese video sharing and streaming platform
-	'www.youth.cn',             // Youth.cn - A China Youth Daily news portal
-	'www.hupu.com',             // Hupu - A Chinese sports community and forum
-	'www.youzu.com',            // Youzu Interactive - A Chinese game developer and publisher
-	'www.panda.tv',             // Panda TV - A Chinese live streaming platform
-	'www.tudou.com',            // Tudou - A Chinese video-sharing website
-	'www.zol.com.cn',           // ZOL - A Chinese electronics and gadgets website
-	'www.toutiao.io',           // Toutiao - A news and information app
-	'www.tiktok.com',           // TikTok - A Chinese short-form video app
-	'www.netease.com',          // NetEase - A Chinese internet technology company
-	'www.cnki.net',             // CNKI - China National Knowledge Infrastructure, an information aggregator
-	'www.zhibo8.cc',            // Zhibo8 - A website providing live sports streams
-	'www.zhangzishi.cc',        // Zhangzishi - Personal website of Zhang Zishi, a public intellectual in China
-	'www.xueqiu.com',           // Xueqiu - A Chinese online social platform for investors and traders
-	'www.qqgongyi.com',         // QQ Gongyi - Tencent's charitable foundation platform
-	'www.ximalaya.com',         // Ximalaya - A Chinese online audio platform
-	'www.dianping.com',         // Dianping - A Chinese online platform for finding and reviewing local businesses
-	'www.suning.com',           // Suning - A leading Chinese online retailer
-	'www.zhaopin.com',          // Zhaopin - A Chinese job recruitment platform
-	'www.jianshu.com',          // Jianshu - A Chinese online writing platform
-	'www.mafengwo.cn',          // Mafengwo - A Chinese travel information sharing platform
-	'www.51cto.com',            // 51CTO - A Chinese IT technical community website
-	'www.qidian.com',           // Qidian - A Chinese web novel platform
-	'www.ctrip.com',            // Ctrip - A Chinese travel services provider
-	'www.pconline.com.cn',      // PConline - A Chinese technology news and review website
-	'www.cnzz.com',             // CNZZ - A Chinese web analytics service provider
-	'www.telegraph.co.uk',      // The Telegraph - A British newspaper website	
-	'www.ynet.com',             // Ynet - A Chinese news portal
-	'www.ted.com',              // TED - A platform for ideas worth spreading
-	'www.renren.com',           // Renren - A Chinese social networking service
-	'www.pptv.com',             // PPTV - A Chinese online video streaming platform
-	'www.liepin.com',           // Liepin - A Chinese online recruitment website
-	'www.881903.com',           // 881903 - A Hong Kong radio station website
-	'www.aipai.com',            // Aipai - A Chinese online video sharing platform
-	'www.ttpaihang.com',        // Ttpaihang - A Chinese celebrity popularity ranking website
-	'www.quyaoya.com',          // Quyaoya - A Chinese online ticketing platform
-	'www.91.com',               // 91.com - A Chinese software download website
-	'www.dianyou.cn',           // Dianyou - A Chinese game information website
-	'www.tmtpost.com',          // TMTPost - A Chinese technology media platform
-	'www.douban.com',           // Douban - A Chinese social networking service
-	'www.guancha.cn',           // Guancha - A Chinese news and commentary website
-	'www.so.com',               // So.com - A Chinese search engine
-	'www.58.com',               // 58.com - A Chinese classified advertising website
-	'www.cnblogs.com',          // Cnblogs - A Chinese technology blog community
-	'www.cntv.cn',              // CCTV - China Central Television official website
-	'www.secoo.com',            // Secoo - A Chinese luxury e-commerce platform
-];
