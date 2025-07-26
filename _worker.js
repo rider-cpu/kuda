@@ -1,5 +1,5 @@
 // @ts-ignore
-import { connect } from 'cloudflare:sockets';
+import { connect } from 'cloudflare:socket s';
 
 // How to generate your own UUID:
 // [Windows] Press "Win + R", input cmd and run:  Powershell -NoExit -Command "[guid]::NewGuid()"
