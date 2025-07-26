@@ -1,15 +1,10 @@
-name = "kuda" # todo
-#name = "cf-worker-connect-test" # todo
-#main = "test/worker/cf-cdn-cgi-trace2.js"
-#main = "test/worker/worker-connect-test.js"
+name = "gas"
 main = "_worker.js"
-compatibility_date = "2023-05-26"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat_v2"]
 
-[vars]
-# UUID = "d342d11e-d424-4583-b36e-524ab1f0afa4"
-# PROXYIP = "1.2.3.4"
-# DNS_RESOLVER_URL = "https://cloudflare-dns.com/dns-query"
-# NODE_ID = "1"
-# API_TOKEN = "example_dev_token"
-# API_HOST = "api.v2board.com"
-UUID = "5331f728-5504-4467-9899-b6e7b0914572"
+[unsafe.metadata.observability]
+enabled = true
+
+[observability.logs]
+enabled = true
